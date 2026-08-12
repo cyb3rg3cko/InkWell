@@ -1,0 +1,82 @@
+# Example deployment: no separate Docker network, no bundled reverse
+# proxy/tunnel -- Inkwell's port is published directly to the host,
+# and whatever needs to reach it (an existing cloudflared container, a
+# reverse proxy, or a trusted LAN) connects to the host's own address
+# and this port, rather than a container name over a shared network.
+#
+# Uses a pre-built `image:` rather than `build: .` -- see the other
+# compose files' comments for why (short version: Portainer's backend
+# usually can't read a build context from your host filesystem, but it
+# handles bind-mounted volumes just fine). Build the image once:
+#   docker build -t inkwell:latest .   # add --build-arg INSTALL_STT=1 for local speech-to-text
+#
+# Runs as a specific host UID/GID rather than root, so files created
+# under the data directory are owned by you, not root. ${UID}/${GID}
+# are NOT reliably available for interpolation through Portainer (or
+# even a plain shell, unless explicitly exported) -- this file uses
+# real placeholder numbers below instead; replace them with yours
+# (`id -u` / `id -g` on the host), or set UID/GID explicitly in
+# Portainer's stack "Environment variables" panel if you'd rather
+# template them. Whichever UID/GID you use needs write access to the
+# data directory (and at least read access to the app directory) on
+# the host, or the container will fail with permission errors trying
+# to create its own files the first time it runs, e.g.:
+#   sudo chown -R 1000:1000 /media/FileServer/ServerFiles/DockerConfigs/InkWell
+#
+# The published port binds to every network interface on the host by
+# default ("8060:8060" is shorthand for "0.0.0.0:8060:8060") -- anyone
+# who can reach this host's network at all can reach Inkwell directly
+# over plain HTTP, bypassing Cloudflare (or any other proxy) entirely.
+# If only something on this same host needs to reach it (e.g. a
+# cloudflared container also using host networking, or another local
+# process), bind to loopback only, as below. Change it to "8060:8060"
+# (no address prefix) -- or bind to this host's specific LAN IP, e.g.
+# "192.168.1.50:8060:8060", for the same reachability without also
+# exposing it on any other interface the host might have -- if you
+# want to reach Inkwell from *other* devices on your LAN too, e.g. as
+# a fallback for when the tunnel/internet is down.
+#
+# If you do that: reaching it as http://<lan-ip>:8060 will load the
+# page, but **login will silently fail** -- the session cookie is
+# marked Secure, so browsers won't store or send it over plain HTTP,
+# and this is a separate origin from your tunneled domain regardless
+# (no session carries over). To actually log in over this LAN-fallback
+# path, uncomment the INKWELL_TLS block below and mount a certificate
+# -- a self-signed one is fine, since this is LAN access you already
+# trust; browsers will show a one-time warning to click through:
+#   openssl req -x509 -newkey rsa:2048 -keyout key.pem -out cert.pem \
+#     -days 3650 -nodes -subj "/CN=inkwell.local"
+# (put cert.pem/key.pem in the app directory, already bind-mounted as
+# /app below, so no extra volume line is needed for them)
+
+services:
+  inkwell:
+    image: inkwell:latest
+    container_name: inkwell
+    user: "1000:1000"    # <- replace with your real UID:GID (`id -u`, `id -g`)
+    restart: unless-stopped
+    environment:
+      INKWELL_WORKSPACE_DIR: /data
+      INKWELL_ADMIN_PASSWORD: ${INKWELL_ADMIN_PASSWORD:?set a strong admin password in .env}
+      INKWELL_ENCRYPTION_KEY: ${INKWELL_ENCRYPTION_KEY:-}
+      INKWELL_STT_PROVIDER: ${INKWELL_STT_PROVIDER:-}
+      INKWELL_STT_LOCAL_MODEL: ${INKWELL_STT_LOCAL_MODEL:-base}
+      INKWELL_STT_API_KEY: ${INKWELL_STT_API_KEY:-}
+      INKWELL_STT_URL: ${INKWELL_STT_URL:-}
+      INKWELL_STT_MODEL_NAME: ${INKWELL_STT_MODEL_NAME:-whisper-1}
+      # Uncomment for working login over a direct LAN-IP fallback path
+      # (see note above) -- leave commented if this port is only ever
+      # reached through something else that already terminates TLS:
+      # INKWELL_TLS: "1"
+      # INKWELL_TLS_CERT: /app/cert.pem
+      # INKWELL_TLS_KEY: /app/key.pem
+    ports:
+      - "127.0.0.1:8060:8060"   # <- see note above for LAN-wide reachability instead
+    volumes:
+      # Where the app code lives -- should contain index.html and
+      # Python_HTTPS_Server.py (this same folder works).
+      - /media/FileServer/ServerFiles/DockerConfigs/InkWell:/app
+      # Where accounts/notebooks/notes live. Created automatically on
+      # first run if it doesn't already exist (with the right
+      # ownership only if the container's UID above can write here).
+      - /media/FileServer/ServerFiles/DockerConfigs/InkWell/data:/data

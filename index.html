@@ -1,0 +1,3660 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Inkwell — Markdown Editor</title>
+<script>
+  // Runs before the rest of the page renders so the mobile layout is
+  // in place from the first paint, rather than flashing desktop layout
+  // first and then switching. Checked once, here, rather than on every
+  // resize -- so an on-screen keyboard opening (which resizes the
+  // viewport on many mobile browsers) can't flip the UI mid-edit.
+  (function () {
+    try {
+      var ua = navigator.userAgent || navigator.vendor || "";
+      var uaMobile = /Android|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini|Mobile|webOS/i.test(ua);
+      var coarsePointer = window.matchMedia && window.matchMedia("(pointer: coarse)").matches;
+      var smallViewport = window.innerWidth <= 820;
+      if (uaMobile || (coarsePointer && smallViewport)) {
+        document.documentElement.classList.add("mobile-ui");
+      }
+    } catch (err) {
+      // if detection fails for any reason, just fall back to desktop layout
+    }
+  })();
+</script>
+<style>
+  :root {
+    --bg: #1b1a17;
+    --surface: #242220;
+    --surface-2: #2c2925;
+    --surface-3: #34302a;
+    --text: #eae6df;
+    --text-dim: #a39c8f;
+    --accent: #5b8fa3;
+    --accent-soft: rgba(91, 143, 163, 0.16);
+    --border: #3a3733;
+    --success: #7fa77a;
+    --danger: #c97a6a;
+    --font-display: ui-serif, Georgia, "Iowan Old Style", "Palatino Linotype", serif;
+    --font-mono: ui-monospace, "JetBrains Mono", "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    height: 100%;
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-display);
+  }
+
+  body {
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* ---------- Top bar ---------- */
+
+  #topbar {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 10px 16px;
+    background: var(--surface);
+    border-bottom: 2px solid var(--accent);
+    flex-shrink: 0;
+    position: relative;
+    z-index: 20;
+  }
+
+  #brand {
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: 17px;
+    letter-spacing: 0.02em;
+    color: var(--accent);
+    margin-right: 18px;
+    user-select: none;
+    white-space: nowrap;
+  }
+
+  .menu {
+    position: relative;
+  }
+
+  .menu-button {
+    background: transparent;
+    border: none;
+    color: var(--text-dim);
+    font-family: var(--font-display);
+    font-size: 14px;
+    padding: 7px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background 0.12s, color 0.12s;
+  }
+
+  .menu-button:hover, .menu-button.open {
+    background: var(--surface-3);
+    color: var(--text);
+  }
+
+  .menu-dropdown {
+    display: none;
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 0;
+    min-width: 220px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.4);
+    padding: 6px;
+    overflow: hidden;
+  }
+
+  .menu-dropdown.open { display: block; }
+
+  .menu-item {
+    display: block;
+    width: 100%;
+    text-align: left;
+    background: none;
+    border: none;
+    color: var(--text);
+    font-family: var(--font-display);
+    font-size: 14px;
+    padding: 9px 12px;
+    border-radius: 5px;
+    cursor: pointer;
+  }
+
+  .menu-item:hover { background: var(--accent-soft); }
+  .menu-item:disabled { color: var(--text-dim); cursor: not-allowed; opacity: 0.5; }
+  .menu-item:disabled:hover { background: none; }
+
+  .menu-separator {
+    height: 1px;
+    background: var(--border);
+    margin: 6px 4px;
+  }
+
+  #topbar-spacer-left, #topbar-spacer-right { flex: 1; }
+
+  #save-button, #mode-toggle-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 34px;
+    height: 34px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--surface-3);
+    color: var(--accent);
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: background 0.12s, border-color 0.12s;
+  }
+  #save-button:hover, #mode-toggle-btn:hover {
+    background: var(--accent-soft);
+    border-color: var(--accent);
+  }
+  #mode-toggle-btn.active {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #14171a;
+  }
+
+  /* .mode-toggle itself is still used by the auth sign-in/create-account
+     tabs -- just no longer by the top bar's Markdown/Rich Text switch,
+     which is the single icon button above. */
+  .mode-toggle {
+    display: flex;
+    background: var(--surface-3);
+    border-radius: 999px;
+    padding: 3px;
+    gap: 2px;
+  }
+
+  .mode-toggle button {
+    border: none;
+    background: none;
+    color: var(--text-dim);
+    font-family: var(--font-display);
+    font-size: 13px;
+    padding: 6px 16px;
+    border-radius: 999px;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+  }
+
+  .mode-toggle button.active {
+    background: var(--accent);
+    color: #14171a;
+    font-weight: 600;
+  }
+
+  /* ---------- Main content ---------- */
+
+  #main {
+    flex: 1;
+    min-height: 0;
+    position: relative;
+  }
+
+  #editor, #preview {
+    position: absolute;
+    inset: 0;
+    overflow-y: auto;
+  }
+
+  #editor {
+    display: block;
+    width: 100%;
+    height: 100%;
+    resize: none;
+    border: none;
+    outline: none;
+    background: var(--editor-bg, var(--bg));
+    color: var(--md-color, var(--text));
+    font-family: var(--font-mono);
+    font-size: 15px;
+    line-height: 1.65;
+    padding: 28px 40px;
+    tab-size: 2;
+  }
+
+  #preview {
+    display: none;
+    background: var(--editor-bg, var(--bg));
+    color: var(--rt-color, var(--text));
+  }
+
+  #preview-inner {
+    padding: 28px 40px;
+    font-family: var(--font-display);
+    font-size: 16.5px;
+    line-height: 1.7;
+  }
+
+  #preview-inner h1, #preview-inner h2, #preview-inner h3 {
+    font-family: var(--font-display);
+    color: var(--accent);
+    line-height: 1.3;
+  }
+  #preview-inner h1 { font-size: 1.9em; margin: 0.4em 0 0.3em; }
+  #preview-inner h2 { font-size: 1.5em; margin: 1em 0 0.3em; }
+  #preview-inner h3 { font-size: 1.2em; margin: 1em 0 0.3em; }
+  #preview-inner p { margin: 0 0 1em; }
+  #preview-inner a { color: var(--accent); text-decoration: underline; text-decoration-color: var(--accent-soft); }
+  #preview-inner code {
+    font-family: var(--font-mono);
+    font-size: 0.9em;
+    background: var(--surface-3);
+    padding: 0.1em 0.4em;
+    border-radius: 4px;
+  }
+  #preview-inner blockquote {
+    margin: 0 0 1em;
+    padding: 2px 18px;
+    border-left: 3px solid var(--accent);
+    color: var(--text-dim);
+  }
+  #preview-inner hr {
+    border: none;
+    border-top: 1px solid var(--border);
+    margin: 2em 0;
+  }
+  #preview-inner ul { margin: 0 0 1em; padding-left: 1.4em; }
+  #preview-inner li { margin: 0.25em 0; }
+
+  #preview-inner ul.task-list {
+    list-style: none;
+    padding-left: 0;
+  }
+  #preview-inner .task-item { margin: 0.35em 0; }
+  #preview-inner .task-item label {
+    display: flex;
+    align-items: flex-start;
+    gap: 9px;
+    cursor: pointer;
+  }
+  #preview-inner .task-checkbox {
+    margin-top: 5px;
+    width: 15px;
+    height: 15px;
+    flex-shrink: 0;
+    accent-color: var(--accent);
+    cursor: pointer;
+  }
+  #preview-inner .task-checkbox:checked + span {
+    color: var(--text-dim);
+    text-decoration: line-through;
+  }
+
+  #editor::placeholder { color: var(--text-dim); }
+
+  /* Some browsers (Chrome especially) apply a yellow tint to textareas
+     they think should be autofilled, via an internal style that plain
+     background-color can't override directly -- this is the standard
+     workaround: a huge inset box-shadow visually replaces it with our
+     own color instead. autocomplete="off" on the element (see HTML)
+     tries to stop the browser from doing this in the first place;
+     this is the fallback in case that's not honored. */
+  #editor:-webkit-autofill,
+  #editor:-webkit-autofill:hover,
+  #editor:-webkit-autofill:focus {
+    -webkit-text-fill-color: var(--md-color, var(--text));
+    box-shadow: 0 0 0 1000px var(--editor-bg, var(--bg)) inset;
+    transition: background-color 5000s ease-in-out 0s;
+  }
+
+  /* ---------- Status bar ---------- */
+
+  #statusbar {
+    flex-shrink: 0;
+    padding: 7px 16px;
+    background: var(--surface);
+    border-top: 1px solid var(--border);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--text-dim);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+
+  #statusbar-left {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+  }
+
+  #status-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--text-dim);
+    flex-shrink: 0;
+  }
+  #status-dot.modified { background: var(--accent); }
+
+  #quick-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex-shrink: 0;
+  }
+  #quick-toolbar.hidden { display: none; }
+
+  .quick-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: var(--surface-2);
+    color: var(--text-dim);
+    cursor: pointer;
+  }
+  .quick-btn:hover {
+    background: var(--accent-soft);
+    color: var(--accent);
+    border-color: var(--accent);
+  }
+
+  /* ---------- Modals ---------- */
+
+  .overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(10, 9, 8, 0.6);
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+  }
+  .overlay.open { display: flex; }
+
+  .modal {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+    width: 440px;
+    max-width: calc(100vw - 40px);
+    max-height: calc(100vh - 60px);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .modal-header {
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border);
+    font-family: var(--font-display);
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--accent);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .modal-close {
+    background: none;
+    border: none;
+    color: var(--text-dim);
+    font-size: 20px;
+    cursor: pointer;
+    line-height: 1;
+    padding: 2px 6px;
+  }
+  .modal-close:hover { color: var(--text); }
+
+  .modal-body {
+    padding: 16px 20px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  .modal-footer {
+    padding: 14px 20px;
+    border-top: 1px solid var(--border);
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+  }
+
+  .btn {
+    font-family: var(--font-display);
+    font-size: 14px;
+    padding: 8px 16px;
+    border-radius: 7px;
+    border: 1px solid var(--border);
+    background: var(--surface-3);
+    color: var(--text);
+    cursor: pointer;
+  }
+  .btn:hover { background: var(--border); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #14171a; font-weight: 600; }
+  .btn.primary:hover { filter: brightness(1.08); }
+
+  .setting-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+  }
+  .setting-row label { font-size: 14px; }
+  .setting-row input[type="color"] {
+    width: 44px;
+    height: 30px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: none;
+    padding: 2px;
+    cursor: pointer;
+  }
+  .color-setting-control {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .hex-input {
+    width: 86px;
+    background: var(--surface-3);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    padding: 5px 8px;
+    font-family: var(--font-mono);
+    font-size: 13px;
+  }
+  .hex-input.invalid { border-color: var(--danger); }
+  .setting-row input[type="number"], .setting-row input[type="range"], .setting-row input[type="checkbox"] {
+    accent-color: var(--accent);
+  }
+  .setting-row input[type="number"] {
+    width: 70px;
+    background: var(--surface-3);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    padding: 5px 8px;
+    font-family: var(--font-mono);
+  }
+  .setting-row select {
+    background: var(--surface-3);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    padding: 6px 9px;
+    font-family: var(--font-display);
+    font-size: 13px;
+  }
+  .setting-section-label {
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-dim);
+    margin-top: 4px;
+  }
+
+  .modal-input {
+    width: 100%;
+    background: var(--surface-3);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    padding: 9px 11px;
+    font-family: var(--font-mono);
+    font-size: 14px;
+  }
+
+  #local-file-input { display: none; }
+
+  /* ---------- App shell / sidebar ---------- */
+
+  #app-shell {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+  }
+
+  #app-body {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+  }
+
+  #sidebar {
+    width: 250px;
+    flex-shrink: 0;
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    transition: width 0.15s ease;
+  }
+
+  #sidebar.collapsed {
+    width: 40px;
+  }
+
+  #sidebar.collapsed #sidebar-title,
+  #sidebar.collapsed #sidebar-back,
+  #sidebar.collapsed #sidebar-toolbar,
+  #sidebar.collapsed #tree-list,
+  #sidebar.collapsed #tree-empty,
+  #sidebar.collapsed #sidebar-footer {
+    display: none !important;
+  }
+
+  #sidebar-header {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 10px 8px;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+
+  .sidebar-icon-btn {
+    background: none;
+    border: none;
+    color: var(--text-dim);
+    width: 26px;
+    height: 26px;
+    border-radius: 6px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+    flex-shrink: 0;
+  }
+  .sidebar-icon-btn:hover { background: var(--surface-3); color: var(--text); }
+  .sidebar-icon-btn.unlocked { color: var(--accent); }
+
+  #sidebar-title {
+    flex: 1;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  #sidebar-toolbar {
+    padding: 8px;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+
+  #sidebar-toolbar .btn {
+    width: 100%;
+    font-size: 13px;
+    padding: 7px 10px;
+  }
+
+  #tree-list {
+    list-style: none;
+    margin: 0;
+    padding: 6px;
+    overflow-y: auto;
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .tree-row {
+    display: flex;
+    align-items: center;
+    border-radius: 6px;
+  }
+  .tree-row:hover { background: var(--surface-3); }
+  .tree-row.dragging {
+    opacity: 0.35;
+  }
+
+  .tree-drag-handle {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 26px;
+    flex-shrink: 0;
+    color: var(--text-dim);
+    cursor: grab;
+    touch-action: none;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+  .tree-drag-handle:hover { color: var(--text); }
+  .tree-drag-handle:active { cursor: grabbing; }
+
+  .tree-row-placeholder {
+    height: 34px;
+    margin: 2px 0;
+    border: 2px dashed var(--accent);
+    border-radius: 6px;
+    background: var(--accent-soft);
+    list-style: none;
+  }
+
+  body.tree-dragging {
+    -webkit-user-select: none;
+    user-select: none;
+  }
+
+  .tree-row-btn {
+    flex: 1;
+    text-align: left;
+    background: none;
+    border: none;
+    color: var(--text);
+    font-family: var(--font-display);
+    font-size: 13.5px;
+    padding: 8px 6px 8px 10px;
+    cursor: pointer;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .tree-row-btn.active { color: var(--accent); font-weight: 600; }
+
+  .tree-kebab {
+    background: none;
+    border: none;
+    color: var(--text-dim);
+    width: 26px;
+    height: 26px;
+    border-radius: 6px;
+    cursor: pointer;
+    flex-shrink: 0;
+    margin-right: 4px;
+    font-size: 15px;
+    line-height: 1;
+  }
+  .tree-kebab:hover { background: var(--surface-2); color: var(--text); }
+
+  #tree-empty {
+    padding: 14px 10px;
+    color: var(--text-dim);
+    font-size: 12.5px;
+  }
+
+  .tree-context-menu {
+    position: fixed;
+    z-index: 300;
+    min-width: 150px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.4);
+    padding: 6px;
+  }
+
+  .tree-context-item {
+    display: block;
+    width: 100%;
+    text-align: left;
+    background: none;
+    border: none;
+    color: var(--text);
+    font-family: var(--font-display);
+    font-size: 13.5px;
+    padding: 8px 10px;
+    border-radius: 5px;
+    cursor: pointer;
+  }
+  .tree-context-item:hover { background: var(--accent-soft); }
+  .tree-context-item.danger { color: var(--danger); }
+
+  #sidebar-footer {
+    border-top: 1px solid var(--border);
+    padding: 8px;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    position: relative;
+  }
+
+  #tree-search {
+    flex: 1;
+    background: var(--surface-3);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    padding: 6px 9px;
+    font-family: var(--font-display);
+    font-size: 12.5px;
+    min-width: 0;
+  }
+
+  #tree-search-results {
+    position: absolute;
+    bottom: calc(100% + 6px);
+    left: 8px;
+    right: 8px;
+    max-height: 260px;
+    overflow-y: auto;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.4);
+    padding: 4px;
+  }
+
+  .search-empty {
+    padding: 10px;
+    color: var(--text-dim);
+    font-size: 12.5px;
+  }
+
+  .search-result-row {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    border-radius: 6px;
+  }
+  .search-result-row:hover { background: var(--surface-3); }
+
+  .search-result-label {
+    flex: 1;
+    text-align: left;
+    background: none;
+    border: none;
+    color: var(--text);
+    padding: 7px 8px;
+    cursor: pointer;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    min-width: 0;
+  }
+  .search-result-name {
+    font-size: 13px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 100%;
+  }
+  .search-result-tag {
+    font-size: 11px;
+    color: var(--text-dim);
+  }
+  .search-result-unhide {
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    font-size: 11px;
+    padding: 4px 8px;
+    border-radius: 999px;
+    cursor: pointer;
+    flex-shrink: 0;
+    margin-right: 4px;
+  }
+  .search-result-unhide:hover { border-color: var(--accent); color: var(--accent); }
+
+  /* ---------- Auth screen ---------- */
+
+  .auth-error {
+    background: rgba(201, 122, 106, 0.14);
+    color: var(--danger);
+    font-size: 13px;
+    padding: 8px 10px;
+    border-radius: 6px;
+    border: 1px solid rgba(201, 122, 106, 0.35);
+  }
+
+  #auth-tabs { align-self: center; margin-bottom: 4px; }
+
+  #auth-hint {
+    font-size: 12px;
+    color: var(--text-dim);
+    text-align: center;
+  }
+
+  #auth-forgot-link {
+    background: none;
+    border: none;
+    color: var(--text-dim);
+    font-size: 12.5px;
+    text-decoration: underline;
+    cursor: pointer;
+    align-self: center;
+    padding: 2px 4px;
+  }
+  #auth-forgot-link:hover { color: var(--accent); }
+
+  /* ---------- Account section (Settings) ---------- */
+
+  .account-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  .account-row .account-name {
+    font-size: 14px;
+    color: var(--text);
+  }
+
+  .pin-form {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .pin-form input {
+    width: 100%;
+  }
+  .pin-status-note {
+    font-size: 12px;
+    color: var(--text-dim);
+  }
+
+  .legacy-import-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+  }
+  .legacy-import-row label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  .share-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .share-row:last-child { border-bottom: none; }
+
+  .share-row-info {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .share-row-title {
+    font-size: 13.5px;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .share-row-kind {
+    font-size: 11px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+  .share-row-link {
+    background: none;
+    border: none;
+    color: var(--accent);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    text-align: left;
+    padding: 0;
+    cursor: pointer;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 100%;
+  }
+  .share-row-link:hover { text-decoration: underline; }
+
+  .share-row-revoke {
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--danger);
+    font-size: 12px;
+    padding: 6px 12px;
+    border-radius: 999px;
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+  .share-row-revoke:hover { border-color: var(--danger); }
+
+  .capslock-warning {
+    display: none;
+    align-items: center;
+    gap: 5px;
+    font-size: 12px;
+    color: #d9a441;
+    margin-top: -4px;
+  }
+
+  /* ---------- Mobile UI (applied when index.html's early detection
+     script adds "mobile-ui" to <html>) ---------- */
+
+  #mobile-sidebar-toggle { display: none; }
+  .mobile-ui #mobile-sidebar-toggle { display: flex; }
+
+  .mobile-ui #topbar { padding: 8px 10px; gap: 2px; }
+  .mobile-ui #brand { margin-right: 8px; font-size: 15px; }
+  .mobile-ui .menu-button { padding: 9px 9px; font-size: 13px; }
+
+  .mobile-ui #save-button,
+  .mobile-ui #mode-toggle-btn,
+  .mobile-ui .sidebar-icon-btn,
+  .mobile-ui .tree-kebab {
+    width: 36px;
+    height: 36px;
+  }
+  .mobile-ui .tree-kebab { font-size: 19px; }
+
+  .mobile-ui .mode-toggle button { padding: 8px 11px; font-size: 12.5px; }
+
+  .mobile-ui #app-body { position: relative; }
+
+  .mobile-ui #sidebar {
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: min(84vw, 320px);
+    transform: translateX(-100%);
+    transition: transform 0.22s ease;
+    z-index: 160;
+    box-shadow: 8px 0 24px rgba(0,0,0,0.4);
+  }
+  .mobile-ui #sidebar.open { transform: translateX(0); }
+  .mobile-ui #sidebar.collapsed { width: min(84vw, 320px); } /* the desktop-only thin-strip mode is unused on mobile */
+
+  #sidebar-backdrop {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(6, 5, 4, 0.55);
+    z-index: 150;
+  }
+  .mobile-ui #sidebar-backdrop.visible { display: block; }
+
+  .mobile-ui .tree-row-btn { padding: 12px 6px 12px 12px; font-size: 15px; }
+  .mobile-ui .tree-drag-handle { width: 30px; height: 40px; }
+
+  .mobile-ui #editor { padding: 18px 16px; font-size: 16px; }
+  .mobile-ui #preview-inner { padding: 18px 16px; font-size: 16px; }
+
+  .mobile-ui .quick-btn { width: 36px; height: 36px; }
+
+  /* 16px stops iOS Safari's automatic zoom-on-focus for text inputs */
+  .mobile-ui input,
+  .mobile-ui select,
+  .mobile-ui textarea {
+    font-size: 16px;
+  }
+
+  .mobile-ui .modal {
+    width: calc(100vw - 24px);
+  }
+
+  .mobile-ui .menu-item { padding: 12px 14px; font-size: 14.5px; }
+  .mobile-ui .tree-context-item { padding: 12px 14px; font-size: 14.5px; }
+  .mobile-ui .search-result-label { padding: 10px 8px; }
+</style>
+</head>
+<body>
+
+<div id="app-shell" style="display:none;">
+
+  <div id="topbar">
+    <button class="sidebar-icon-btn" id="mobile-sidebar-toggle" title="Menu">
+      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"></path><path d="M3 12h18"></path><path d="M3 18h18"></path></svg>
+    </button>
+    <div id="brand">Inkwell</div>
+
+    <div class="menu">
+      <button class="menu-button" id="file-menu-button">File</button>
+      <div class="menu-dropdown" id="file-menu">
+        <button class="menu-item" id="menu-new">New</button>
+        <button class="menu-item" id="menu-import-local">Import Local File…</button>
+        <div class="menu-separator"></div>
+        <button class="menu-item" id="menu-download">Download a Copy…</button>
+        <div class="menu-separator"></div>
+        <button class="menu-item" id="menu-manage-shares">Manage Shares…</button>
+        <button class="menu-item" id="menu-settings">Settings…</button>
+      </div>
+    </div>
+
+    <div id="topbar-spacer-left"></div>
+
+    <button id="save-button" title="Save">
+      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2Z"></path>
+        <path d="M17 21v-8H7v8"></path>
+        <path d="M7 3v5h8"></path>
+      </svg>
+    </button>
+
+    <div id="topbar-spacer-right"></div>
+
+    <button id="mode-toggle-btn" title="Show Rich Text preview">
+      <svg id="mode-toggle-icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8Z"></path>
+        <circle cx="12" cy="12" r="3"></circle>
+      </svg>
+    </button>
+  </div>
+
+  <div id="app-body">
+    <div id="sidebar">
+      <div id="sidebar-header">
+        <button class="sidebar-icon-btn" id="sidebar-back" title="Back to notebooks" style="display:none;">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5"></path><path d="M12 19l-7-7 7-7"></path></svg>
+        </button>
+        <div id="sidebar-title">Notebooks</div>
+        <button class="sidebar-icon-btn" id="sidebar-collapse" title="Collapse">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"></path></svg>
+        </button>
+      </div>
+      <div id="sidebar-toolbar">
+        <button class="btn" id="sidebar-new-item">+ New Notebook</button>
+      </div>
+      <ul id="tree-list"></ul>
+      <div id="tree-empty" style="display:none;">No notebooks yet.</div>
+      <div id="sidebar-footer">
+        <button class="sidebar-icon-btn" id="hidden-eye" title="Include hidden notebooks/notes in search">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8Z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+        </button>
+        <input type="text" id="tree-search" placeholder="Search notebooks & notes…" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+        <div id="tree-search-results" style="display:none;"></div>
+      </div>
+    </div>
+
+    <div id="sidebar-backdrop"></div>
+
+    <div id="main">
+      <textarea id="editor" placeholder="Start writing…" spellcheck="false" autocomplete="off"></textarea>
+      <div id="preview"><div id="preview-inner"></div></div>
+    </div>
+  </div>
+
+  <div id="statusbar">
+    <div id="statusbar-left">
+      <div id="status-dot"></div>
+      <span id="status-text">New document</span>
+    </div>
+    <div id="quick-toolbar">
+      <button class="quick-btn" id="qb-indent" title="Indent (Tab)">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M9 6h12"></path>
+          <path d="M9 12h12"></path>
+          <path d="M9 18h12"></path>
+          <path d="M3 8l4 4-4 4"></path>
+        </svg>
+      </button>
+      <button class="quick-btn" id="qb-outdent" title="Outdent (Shift+Tab)">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M9 6h12"></path>
+          <path d="M9 12h12"></path>
+          <path d="M9 18h12"></path>
+          <path d="M7 8L3 12l4 4"></path>
+        </svg>
+      </button>
+      <button class="quick-btn" id="qb-bullet" title="Bullet list">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="4" cy="6" r="1.3" fill="currentColor" stroke="none"></circle>
+          <circle cx="4" cy="12" r="1.3" fill="currentColor" stroke="none"></circle>
+          <circle cx="4" cy="18" r="1.3" fill="currentColor" stroke="none"></circle>
+          <path d="M9 6h12"></path>
+          <path d="M9 12h12"></path>
+          <path d="M9 18h12"></path>
+        </svg>
+      </button>
+      <button class="quick-btn" id="qb-checkbox" title="Checklist item">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="3" y="3" width="18" height="18" rx="3"></rect>
+          <path d="M7 12l3 3 7-7"></path>
+        </svg>
+      </button>
+    </div>
+  </div>
+
+</div>
+
+  <input type="file" id="local-file-input" accept=".txt,.md,text/plain">
+
+  <!-- Sign in / create account -->
+  <div class="overlay open" id="auth-overlay">
+    <div class="modal" style="width:380px;">
+      <div class="modal-header">
+        Inkwell
+      </div>
+      <div class="modal-body">
+        <div class="mode-toggle" id="auth-tabs">
+          <button id="auth-tab-login" class="active">Sign In</button>
+          <button id="auth-tab-register">Create Account</button>
+        </div>
+        <div id="auth-error" class="auth-error" style="display:none;"></div>
+        <input type="text" class="modal-input" id="auth-username" placeholder="Username" autocomplete="username">
+        <input type="password" class="modal-input" id="auth-password" placeholder="Password" autocomplete="current-password">
+        <div class="capslock-warning" id="auth-password-capslock">&#8679; Caps Lock is on</div>
+        <input type="password" class="modal-input" id="auth-password-confirm" placeholder="Confirm password" autocomplete="new-password" style="display:none;">
+        <div class="capslock-warning" id="auth-password-confirm-capslock">&#8679; Caps Lock is on</div>
+        <button class="btn primary" id="auth-submit" style="width:100%;">Sign In</button>
+        <div id="auth-hint">Notebooks and notes are private to your account.</div>
+        <button id="auth-forgot-link" type="button">Forgot password?</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Admin password reset (recovery path when an operator has configured
+       an admin password -- see Settings/README) -->
+  <div class="overlay" id="admin-reset-overlay">
+    <div class="modal" style="width:380px;">
+      <div class="modal-header">
+        Reset Password
+        <button class="modal-close" data-close="admin-reset-overlay">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div id="admin-reset-hint" class="pin-status-note">
+          This requires the server's admin password -- ask whoever runs this Inkwell instance if you don't have it.
+        </div>
+        <div id="admin-reset-error" class="auth-error" style="display:none;"></div>
+        <input type="text" class="modal-input" id="admin-reset-username" placeholder="Your username" autocomplete="username">
+        <input type="password" class="modal-input" id="admin-reset-new-password" placeholder="New password (min 10 characters)" autocomplete="new-password">
+        <div class="capslock-warning" id="admin-reset-new-password-capslock">&#8679; Caps Lock is on</div>
+        <input type="password" class="modal-input" id="admin-reset-confirm-password" placeholder="Confirm new password" autocomplete="new-password">
+        <div class="capslock-warning" id="admin-reset-confirm-password-capslock">&#8679; Caps Lock is on</div>
+        <input type="password" class="modal-input" id="admin-reset-admin-password" placeholder="Admin password" autocomplete="off">
+        <div class="capslock-warning" id="admin-reset-admin-password-capslock">&#8679; Caps Lock is on</div>
+        <button class="btn primary" id="admin-reset-submit" style="width:100%;">Reset Password</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- PIN modal (reveals hidden notebooks/notes) -->
+  <div class="overlay" id="pin-overlay">
+    <div class="modal" style="width:320px;">
+      <div class="modal-header">
+        Enter PIN
+        <button class="modal-close" data-close="pin-overlay">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div id="pin-error" class="auth-error" style="display:none;"></div>
+        <input type="password" inputmode="numeric" maxlength="4" pattern="[0-9]*" class="modal-input" id="pin-input" placeholder="4-digit PIN">
+        <div class="capslock-warning" id="pin-input-capslock">&#8679; Caps Lock is on</div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn primary" id="pin-submit">Unlock</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Manage Shares modal -->
+  <div class="overlay" id="manage-shares-overlay">
+    <div class="modal" style="width:540px;">
+      <div class="modal-header">
+        Manage Shares
+        <button class="modal-close" data-close="manage-shares-overlay">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="pin-status-note" id="manage-shares-empty" style="display:none;">
+          No active shares yet -- share a notebook or note from its "⋯" menu in the sidebar.
+        </div>
+        <div id="manage-shares-list"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Settings modal -->
+  <div class="overlay" id="settings-overlay">
+    <div class="modal">
+      <div class="modal-header">
+        Settings
+        <button class="modal-close" data-close="settings-overlay">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="setting-section-label">Account</div>
+        <div class="account-row">
+          <span class="account-name">Signed in as <strong id="current-username"></strong></span>
+          <button class="btn" id="menu-logout">Log Out</button>
+        </div>
+
+        <div class="setting-section-label">Change Password</div>
+        <div class="pin-form">
+          <input type="password" class="modal-input" id="change-pw-current" placeholder="Current password" autocomplete="current-password">
+          <div class="capslock-warning" id="change-pw-current-capslock">&#8679; Caps Lock is on</div>
+          <input type="password" class="modal-input" id="change-pw-new" placeholder="New password (min 8 characters)" autocomplete="new-password">
+          <div class="capslock-warning" id="change-pw-new-capslock">&#8679; Caps Lock is on</div>
+          <input type="password" class="modal-input" id="change-pw-confirm" placeholder="Confirm new password" autocomplete="new-password">
+          <div class="capslock-warning" id="change-pw-confirm-capslock">&#8679; Caps Lock is on</div>
+          <button class="btn" id="change-pw-button" style="align-self:flex-start;">Change Password</button>
+          <div id="change-pw-error" class="auth-error" style="display:none;"></div>
+        </div>
+
+        <div class="setting-section-label">Privacy PIN</div>
+        <div class="pin-status-note" id="pin-status-note">Loading…</div>
+        <div class="pin-form">
+          <input type="password" class="modal-input" id="pin-current-password" placeholder="Current account password">
+          <div class="capslock-warning" id="pin-current-password-capslock">&#8679; Caps Lock is on</div>
+          <input type="password" inputmode="numeric" maxlength="4" pattern="[0-9]*" class="modal-input" id="pin-new-value" placeholder="New 4-digit PIN">
+          <button class="btn" id="pin-save-button" style="align-self:flex-start;">Set / Change PIN</button>
+          <div id="pin-set-error" class="auth-error" style="display:none;"></div>
+        </div>
+
+        <div id="legacy-import-section" style="display:none;">
+          <div class="setting-section-label">Import Files From Old Server</div>
+          <div class="pin-status-note">Files left over from before notebooks existed. Choose which to bring in, and which notebook to put them in.</div>
+          <input type="text" class="modal-input" id="legacy-notebook-name" placeholder="Notebook name" value="Imported">
+          <div id="legacy-file-list"></div>
+          <button class="btn" id="legacy-import-button" style="align-self:flex-start;">Import Selected</button>
+        </div>
+
+        <div class="setting-section-label">Colors</div>
+        <div class="setting-row">
+          <label for="setting-accent">Accent color</label>
+          <div class="color-setting-control">
+            <input type="color" id="setting-accent">
+            <input type="text" id="setting-accent-hex" class="hex-input" maxlength="7" placeholder="#5b8fa3" spellcheck="false" autocomplete="off">
+          </div>
+        </div>
+        <div class="setting-row">
+          <label for="setting-bg">Editor background</label>
+          <div class="color-setting-control">
+            <input type="color" id="setting-bg">
+            <input type="text" id="setting-bg-hex" class="hex-input" maxlength="7" placeholder="#1b1a17" spellcheck="false" autocomplete="off">
+          </div>
+        </div>
+        <div class="setting-row">
+          <label for="setting-md-color">Markdown text</label>
+          <div class="color-setting-control">
+            <input type="color" id="setting-md-color">
+            <input type="text" id="setting-md-color-hex" class="hex-input" maxlength="7" placeholder="#eae6df" spellcheck="false" autocomplete="off">
+          </div>
+        </div>
+        <div class="setting-row">
+          <label for="setting-rt-color">Rich Text text</label>
+          <div class="color-setting-control">
+            <input type="color" id="setting-rt-color">
+            <input type="text" id="setting-rt-color-hex" class="hex-input" maxlength="7" placeholder="#eae6df" spellcheck="false" autocomplete="off">
+          </div>
+        </div>
+        <div class="setting-section-label">Other</div>
+        <div class="setting-row">
+          <label for="setting-scroll">Scroll speed</label>
+          <input type="number" id="setting-scroll" min="0.2" max="5" step="0.1">
+        </div>
+        <div class="setting-row">
+          <label for="setting-auto-list">Auto-continue lists (Enter/Tab)</label>
+          <input type="checkbox" id="setting-auto-list">
+        </div>
+        <div class="setting-row">
+          <label for="setting-quick-toolbar">Show quick-format buttons</label>
+          <input type="checkbox" id="setting-quick-toolbar">
+        </div>
+        <div class="setting-row">
+          <label for="setting-autosave">Auto-save</label>
+          <input type="checkbox" id="setting-autosave">
+        </div>
+        <div class="setting-row">
+          <label for="setting-autosave-interval">Auto-save every (minutes)</label>
+          <input type="number" id="setting-autosave-interval" min="1" max="120" step="1">
+        </div>
+        <div class="setting-row">
+          <label for="setting-save-action">Top bar save button</label>
+          <select id="setting-save-action">
+            <option value="server">Save to Server</option>
+            <option value="download">Download a Copy</option>
+          </select>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn" id="settings-reset">Reset to Defaults</button>
+        <button class="btn primary" data-close="settings-overlay">Done</button>
+      </div>
+    </div>
+  </div>
+
+<script>
+(function () {
+  "use strict";
+
+  // ---------------------------------------------------------------
+  // State
+  // ---------------------------------------------------------------
+
+  const state = {
+    filename: "",      // "" = never saved/opened yet
+    notebook: null,    // notebook this document belongs to (server-sourced docs only)
+    source: "",        // "server" | ""
+    modified: false,
+    mode: "markdown",  // "markdown" | "rich_text"
+  };
+
+  let currentUser = null;
+
+  const treeState = {
+    view: "notebooks",      // "notebooks" | "notes"
+    currentNotebook: null,
+    notebooksCache: [],
+    notesCache: [],
+  };
+
+  let hiddenUnlocked = false;
+
+  function jsonHeaders() {
+    return { "Content-Type": "application/json" };
+  }
+
+  // ---------------------------------------------------------------
+  // Caps Lock indicator -- attached to every password-entry field so
+  // a mistyped password/PIN because of Caps Lock is obvious before
+  // submitting, not after a confusing "incorrect password" error.
+  // ---------------------------------------------------------------
+
+  function attachCapsLockWarning(inputId, warningId) {
+    const input = document.getElementById(inputId);
+    const warning = document.getElementById(warningId);
+    if (!input || !warning) return;
+    const check = (e) => {
+      const on = typeof e.getModifierState === "function" && e.getModifierState("CapsLock");
+      warning.style.display = on ? "flex" : "none";
+    };
+    input.addEventListener("keydown", check);
+    input.addEventListener("keyup", check);
+    input.addEventListener("blur", () => { warning.style.display = "none"; });
+  }
+
+  [
+    ["auth-password", "auth-password-capslock"],
+    ["auth-password-confirm", "auth-password-confirm-capslock"],
+    ["pin-input", "pin-input-capslock"],
+    ["pin-current-password", "pin-current-password-capslock"],
+    ["change-pw-current", "change-pw-current-capslock"],
+    ["change-pw-new", "change-pw-new-capslock"],
+    ["change-pw-confirm", "change-pw-confirm-capslock"],
+    ["admin-reset-new-password", "admin-reset-new-password-capslock"],
+    ["admin-reset-confirm-password", "admin-reset-confirm-password-capslock"],
+    ["admin-reset-admin-password", "admin-reset-admin-password-capslock"],
+  ].forEach(([inputId, warningId]) => attachCapsLockWarning(inputId, warningId));
+
+  // ---------------------------------------------------------------
+  // Mobile UI -- the "mobile-ui" class itself is added earlier, in the
+  // small inline script in <head>, so it's in place before first
+  // paint. This just wires up the behavior that goes with it: the
+  // sidebar becomes an off-canvas drawer (hamburger button + backdrop)
+  // instead of the desktop's persistent/collapsible panel.
+  // ---------------------------------------------------------------
+
+  function isMobileUI() {
+    return document.documentElement.classList.contains("mobile-ui");
+  }
+
+  function openMobileDrawer() {
+    document.getElementById("sidebar").classList.add("open");
+    document.getElementById("sidebar-backdrop").classList.add("visible");
+  }
+
+  function closeMobileDrawer() {
+    document.getElementById("sidebar").classList.remove("open");
+    document.getElementById("sidebar-backdrop").classList.remove("visible");
+  }
+
+  document.getElementById("mobile-sidebar-toggle").addEventListener("click", () => {
+    if (document.getElementById("sidebar").classList.contains("open")) {
+      closeMobileDrawer();
+    } else {
+      openMobileDrawer();
+    }
+  });
+
+  document.getElementById("sidebar-backdrop").addEventListener("click", closeMobileDrawer);
+
+  const DEFAULT_SETTINGS = {
+    accent_color: "#5b8fa3",
+    editor_background_color: "#1b1a17",
+    markdown_text_color: "#eae6df",
+    rich_text_color: "#eae6df",
+    scroll_multiplier: 1.0,
+    auto_continue_lists: false,
+    save_button_action: "server",
+    show_quick_toolbar: true,
+    auto_save_enabled: false,
+    auto_save_interval_minutes: 5,
+  };
+  let settings = Object.assign({}, DEFAULT_SETTINGS);
+
+  const editor = document.getElementById("editor");
+  const preview = document.getElementById("preview");
+  const previewInner = document.getElementById("preview-inner");
+  const statusText = document.getElementById("status-text");
+  const statusDot = document.getElementById("status-dot");
+
+  let statusTimer = null;
+  let lastSavedAt = null;
+
+  // ---------------------------------------------------------------
+  // Status bar
+  // ---------------------------------------------------------------
+
+  function refreshStatusLabel() {
+    const name = state.filename ? displayNoteName(state.filename) : "New document";
+    const notebookTag = state.notebook ? `${state.notebook} / ` : "";
+    const sourceTag = state.source ? ` (${state.source})` : "";
+    const savedTag = lastSavedAt
+      ? ` · Saved ${lastSavedAt.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`
+      : "";
+    statusText.textContent = notebookTag + name + sourceTag + savedTag;
+    statusDot.classList.toggle("modified", state.modified);
+  }
+
+  function showTransientStatus(message) {
+    statusText.textContent = message;
+    if (statusTimer) clearTimeout(statusTimer);
+    statusTimer = setTimeout(refreshStatusLabel, 3000);
+  }
+
+  function markModified() {
+    state.modified = true;
+    refreshStatusLabel();
+    saveDraftToSession();
+  }
+
+  editor.addEventListener("input", markModified);
+
+  // ---------------------------------------------------------------
+  // Draft recovery via sessionStorage -- survives an unexpected reload
+  // of this tab (browser crash-recovery reload, accidental F5, etc.)
+  // without needing the tab to stay open continuously. Clears itself
+  // naturally when the tab actually closes, which is exactly the
+  // "reload but not tab-close" protection asked for -- deliberately not
+  // using localStorage here, which would also survive closing the tab
+  // entirely and reopening later; that's a stronger, different trade-off
+  // (worth asking for separately if wanted).
+  // ---------------------------------------------------------------
+
+  const DRAFT_KEY = "inkwell_draft_v1";
+
+  // Checks whether a given notebook, or a specific note inside it, is
+  // hidden -- used to keep a hidden note from silently auto-loading
+  // (session-draft restore on login/reload). Prefers the sidebar's
+  // already-loaded notebook cache over a fresh fetch, and only hits
+  // the network for the note-level check when it actually needs to.
+  async function isNoteHidden(notebook, filename) {
+    if (!notebook) return false;
+    let nb = treeState.notebooksCache.find((n) => n.name === notebook);
+    if (!nb) {
+      try {
+        const res = await fetch("/api/notebooks");
+        if (!res.ok) return false;
+        const data = await res.json();
+        nb = (data.notebooks || []).find((n) => n.name === notebook);
+      } catch (err) {
+        return false;
+      }
+    }
+    if (!nb) return false;
+    if (nb.hidden) return true;
+    if (!filename) return false;
+    try {
+      const res = await fetch(`/api/notes?notebook=${encodeURIComponent(notebook)}`);
+      if (!res.ok) return false;
+      const data = await res.json();
+      const note = (data.notes || []).find((n) => n.name === filename);
+      return note ? !!note.hidden : false;
+    } catch (err) {
+      return false;
+    }
+  }
+
+  function saveDraftToSession() {
+    try {
+      sessionStorage.setItem(DRAFT_KEY, JSON.stringify({
+        text: editor.value,
+        filename: state.filename,
+        notebook: state.notebook,
+        source: state.source,
+      }));
+    } catch (err) {
+      // sessionStorage can throw (quota exceeded, or disabled entirely in
+      // some private-browsing configurations) -- this is a safety net,
+      // not something that should ever interrupt normal editing.
+    }
+  }
+
+  async function restoreDraftFromSession() {
+    let raw;
+    try {
+      raw = sessionStorage.getItem(DRAFT_KEY);
+    } catch (err) {
+      return;
+    }
+    if (!raw) return;
+    let draft;
+    try {
+      draft = JSON.parse(raw);
+    } catch (err) {
+      return; // corrupted/unparseable draft -- ignore rather than throw
+    }
+    if (typeof draft.text !== "string" || draft.text === "") return;
+
+    if (draft.notebook && (await isNoteHidden(draft.notebook, draft.filename))) {
+      // Don't auto-load a note (or a note inside a notebook) that was
+      // hidden -- the whole point of hiding it is that it doesn't just
+      // show up on its own. Clear the stale draft rather than leaving
+      // it to keep silently failing this check on every future load.
+      try { sessionStorage.removeItem(DRAFT_KEY); } catch (err) { /* best effort */ }
+      return;
+    }
+
+    editor.value = draft.text;
+    state.filename = draft.filename || "";
+    state.notebook = draft.notebook || null;
+    state.source = draft.source || "";
+    state.modified = true; // wasn't explicitly saved before the reload
+    if (state.mode === "rich_text") previewInner.innerHTML = renderMarkdown(draft.text);
+    showTransientStatus("Restored draft from before the reload");
+  }
+
+  // ---------------------------------------------------------------
+  // Auto-continue lists on Enter, and Tab/Shift+Tab to indent/outdent
+  // -- opt-in via Settings ("Auto-continue lists"), since it changes
+  // typing behavior in the textarea in a way not everyone wants
+  // (Tab in particular normally moves focus away from a textarea;
+  // this feature intentionally captures it instead, only when enabled).
+  // ---------------------------------------------------------------
+
+  const LIST_INDENT = "  "; // 2 spaces per level
+
+  function getLineStart(text, pos) {
+    return text.lastIndexOf("\n", pos - 1) + 1;
+  }
+  function getLineEnd(text, pos) {
+    const idx = text.indexOf("\n", pos);
+    return idx === -1 ? text.length : idx;
+  }
+
+  // Continues "- " or "* " bullets onto the next line, keeping the same
+  // indentation -- same idea as a word processor continuing a bullet
+  // point after Enter. Pressing Enter on an already-empty bullet ends
+  // the list instead (removes that empty marker, drops to a plain
+  // blank line), matching the common word-processor convention rather
+  // than continuing indentation forever. Only acts when the caret sits
+  // on a line that actually starts with a bullet marker -- otherwise
+  // Enter behaves completely normally.
+  function handleEnterForLists(e) {
+    if (editor.selectionStart !== editor.selectionEnd) return; // leave selections to default behavior
+    const pos = editor.selectionStart;
+    const text = editor.value;
+    const lineStart = getLineStart(text, pos);
+    const beforeCaret = text.slice(lineStart, pos);
+
+    // Checked first, since "- [ ] text" also matches the plain-bullet
+    // pattern below -- without this, a checklist line would continue
+    // as a bare "- " on the next line, silently losing the checkbox.
+    const checkboxMatch = beforeCaret.match(CHECKBOX_RE);
+    if (checkboxMatch) {
+      e.preventDefault();
+      const indent = checkboxMatch[1], marker = checkboxMatch[2], content = checkboxMatch[4];
+      if (content.trim() === "") {
+        editor.value = text.slice(0, lineStart) + "\n" + text.slice(pos);
+        editor.selectionStart = editor.selectionEnd = lineStart + 1;
+      } else {
+        // New items always start unchecked, regardless of whether the
+        // line being continued from was checked -- matches how most
+        // checklist UIs (task apps, word processors) behave.
+        const insertion = `\n${indent}${marker} [ ] `;
+        editor.value = text.slice(0, pos) + insertion + text.slice(pos);
+        editor.selectionStart = editor.selectionEnd = pos + insertion.length;
+      }
+      markModified();
+      if (state.mode === "rich_text") previewInner.innerHTML = renderMarkdown(editor.value);
+      return;
+    }
+
+    const match = beforeCaret.match(/^(\s*)([-*])\s(.*)$/);
+    if (!match) return; // not on a bullet line -- default Enter behavior applies
+
+    e.preventDefault();
+    const indent = match[1], marker = match[2], content = match[3];
+
+    if (content.trim() === "") {
+      // Empty bullet -- end the list rather than continuing indefinitely.
+      editor.value = text.slice(0, lineStart) + "\n" + text.slice(pos);
+      editor.selectionStart = editor.selectionEnd = lineStart + 1;
+    } else {
+      const insertion = "\n" + indent + marker + " ";
+      editor.value = text.slice(0, pos) + insertion + text.slice(pos);
+      editor.selectionStart = editor.selectionEnd = pos + insertion.length;
+    }
+    markModified();
+    if (state.mode === "rich_text") previewInner.innerHTML = renderMarkdown(editor.value);
+  }
+
+  // Indents (Tab) or outdents (Shift+Tab) every line touched by the
+  // current selection (or just the current line, if nothing is
+  // selected) by one level. Outdenting removes up to one level's worth
+  // of leading spaces (or a single leading tab) -- whichever a given
+  // line actually has, so lines with less than a full level of
+  // indentation don't error out, they just lose what they have.
+  function adjustIndent(shiftHeld) {
+    const text = editor.value;
+    const start = editor.selectionStart;
+    const end = editor.selectionEnd;
+    const blockStart = getLineStart(text, start);
+    const blockEnd = getLineEnd(text, end);
+    const lines = text.slice(blockStart, blockEnd).split("\n");
+
+    const startOffset = start - blockStart;
+    const endOffset = end - blockStart;
+
+    const newLines = [];
+    let deltaAtStart = 0, deltaAtEnd = 0, runningOffset = 0;
+
+    for (const line of lines) {
+      const lineStartOffset = runningOffset;
+      let newLine, delta;
+      if (!shiftHeld) {
+        newLine = LIST_INDENT + line;
+        delta = LIST_INDENT.length;
+      } else {
+        let removed = 0;
+        if (line.startsWith(LIST_INDENT)) removed = LIST_INDENT.length;
+        else if (line.startsWith("\t") || line.startsWith(" ")) removed = 1;
+        newLine = line.slice(removed);
+        delta = -removed;
+      }
+      newLines.push(newLine);
+      if (lineStartOffset <= startOffset) deltaAtStart += delta;
+      if (lineStartOffset <= endOffset) deltaAtEnd += delta;
+      runningOffset += line.length + 1;
+    }
+
+    editor.value = text.slice(0, blockStart) + newLines.join("\n") + text.slice(blockEnd);
+    const newStart = Math.max(blockStart, start + deltaAtStart);
+    editor.selectionStart = newStart;
+    editor.selectionEnd = Math.max(newStart, end + deltaAtEnd);
+
+    markModified();
+    if (state.mode === "rich_text") previewInner.innerHTML = renderMarkdown(editor.value);
+  }
+
+  // Toggles a "- " bullet marker on every line touched by the current
+  // selection (or just the current line, if nothing is selected).
+  // Toggle direction is decided for the whole block at once: if every
+  // non-blank line already has a marker, they're all removed; otherwise
+  // a marker is added to whichever lines don't already have one (blank
+  // lines are left alone either way).
+  const BULLET_RE = /^(\s*)([-*])\s+(.*)$/;
+
+  function toggleBulletList() {
+    const text = editor.value;
+    const start = editor.selectionStart;
+    const end = editor.selectionEnd;
+    const blockStart = getLineStart(text, start);
+    const blockEnd = getLineEnd(text, end);
+    const lines = text.slice(blockStart, blockEnd).split("\n");
+
+    const nonBlank = lines.filter((l) => l.trim() !== "");
+    const shouldRemove = nonBlank.length > 0 && nonBlank.every((l) => BULLET_RE.test(l));
+
+    const startOffset = start - blockStart;
+    const endOffset = end - blockStart;
+
+    const newLines = [];
+    let deltaAtStart = 0, deltaAtEnd = 0, runningOffset = 0;
+
+    for (const line of lines) {
+      const lineStartOffset = runningOffset;
+      let newLine = line, delta = 0;
+      if (line.trim() !== "") {
+        if (shouldRemove) {
+          const m = line.match(BULLET_RE);
+          if (m) {
+            newLine = m[1] + m[3];
+            delta = newLine.length - line.length;
+          }
+        } else if (!BULLET_RE.test(line)) {
+          newLine = "- " + line;
+          delta = newLine.length - line.length;
+        }
+      }
+      newLines.push(newLine);
+      if (lineStartOffset <= startOffset) deltaAtStart += delta;
+      if (lineStartOffset <= endOffset) deltaAtEnd += delta;
+      runningOffset += line.length + 1;
+    }
+
+    editor.value = text.slice(0, blockStart) + newLines.join("\n") + text.slice(blockEnd);
+    const newStart = Math.max(blockStart, start + deltaAtStart);
+    editor.selectionStart = newStart;
+    editor.selectionEnd = Math.max(newStart, end + deltaAtEnd);
+
+    markModified();
+    if (state.mode === "rich_text") previewInner.innerHTML = renderMarkdown(editor.value);
+  }
+
+  // Toggles "- [ ] " checklist syntax on every line touched by the
+  // current selection (or just the current line, if nothing is
+  // selected). Same whole-block toggle direction as the bullet button:
+  // if every non-blank line is already a checklist item, the checklist
+  // syntax is stripped from all of them; otherwise, lines that aren't
+  // already checklist items get "[ ] " added (an existing plain "- "/
+  // "* " bullet has the checkbox inserted after its marker rather than
+  // getting a second one; lines with no marker at all get "- [ ] "
+  // added outright). Existing checked/unchecked state is left alone.
+  const CHECKBOX_RE = /^(\s*)([-*])\s\[([ xX])\]\s?(.*)$/;
+
+  function toggleCheckboxList() {
+    const text = editor.value;
+    const start = editor.selectionStart;
+    const end = editor.selectionEnd;
+    const blockStart = getLineStart(text, start);
+    const blockEnd = getLineEnd(text, end);
+    const lines = text.slice(blockStart, blockEnd).split("\n");
+
+    const nonBlank = lines.filter((l) => l.trim() !== "");
+    const shouldRemove = nonBlank.length > 0 && nonBlank.every((l) => CHECKBOX_RE.test(l));
+
+    const startOffset = start - blockStart;
+    const endOffset = end - blockStart;
+
+    const newLines = [];
+    let deltaAtStart = 0, deltaAtEnd = 0, runningOffset = 0;
+
+    for (const line of lines) {
+      const lineStartOffset = runningOffset;
+      let newLine = line, delta = 0;
+      if (line.trim() !== "") {
+        const cbMatch = line.match(CHECKBOX_RE);
+        if (shouldRemove) {
+          if (cbMatch) {
+            newLine = cbMatch[1] + cbMatch[4];
+            delta = newLine.length - line.length;
+          }
+        } else if (!cbMatch) {
+          const plainMatch = line.match(BULLET_RE);
+          if (plainMatch) {
+            newLine = `${plainMatch[1]}${plainMatch[2]} [ ] ${plainMatch[3]}`;
+          } else {
+            newLine = "- [ ] " + line;
+          }
+          delta = newLine.length - line.length;
+        }
+      }
+      newLines.push(newLine);
+      if (lineStartOffset <= startOffset) deltaAtStart += delta;
+      if (lineStartOffset <= endOffset) deltaAtEnd += delta;
+      runningOffset += line.length + 1;
+    }
+
+    editor.value = text.slice(0, blockStart) + newLines.join("\n") + text.slice(blockEnd);
+    const newStart = Math.max(blockStart, start + deltaAtStart);
+    editor.selectionStart = newStart;
+    editor.selectionEnd = Math.max(newStart, end + deltaAtEnd);
+
+    markModified();
+    if (state.mode === "rich_text") previewInner.innerHTML = renderMarkdown(editor.value);
+  }
+
+  // ---------------------------------------------------------------
+  // Quick-format buttons (bottom of the window) -- act on the current
+  // selection if there is one, or just the current line/cursor position
+  // otherwise. These always work, independent of the "Auto-continue
+  // lists" setting above, which only governs the Tab/Enter *keyboard*
+  // shortcuts inside the editor.
+  // ---------------------------------------------------------------
+
+  document.getElementById("qb-indent").addEventListener("click", () => {
+    editor.focus();
+    adjustIndent(false);
+  });
+  document.getElementById("qb-outdent").addEventListener("click", () => {
+    editor.focus();
+    adjustIndent(true);
+  });
+  document.getElementById("qb-bullet").addEventListener("click", () => {
+    editor.focus();
+    toggleBulletList();
+  });
+  document.getElementById("qb-checkbox").addEventListener("click", () => {
+    editor.focus();
+    toggleCheckboxList();
+  });
+
+  function applyQuickToolbarVisibility() {
+    document.getElementById("quick-toolbar").classList.toggle("hidden", !settings.show_quick_toolbar);
+  }
+
+  editor.addEventListener("keydown", (e) => {
+    if (!settings.auto_continue_lists) return;
+    if (e.key === "Enter" && !e.shiftKey) {
+      handleEnterForLists(e);
+    } else if (e.key === "Tab") {
+      e.preventDefault();
+      adjustIndent(e.shiftKey);
+    }
+  });
+
+  // ---------------------------------------------------------------
+  // Double-click to select a word -- implemented manually rather than
+  // relying on the browser's own native double-click/selection-gesture
+  // detection. Works fine on desktop with a real mouse, but VR browsers
+  // emulate clicks through a controller raycast rather than a real
+  // mouse or touchscreen, and their native detection doesn't reliably
+  // handle that (reported symptom: a native selection toolbar/paste
+  // bubble appears and gets stuck, with nothing actually selected).
+  // Detecting the double-click ourselves, by timing and position, works
+  // identically regardless of what kind of pointer produced the clicks.
+  //
+  // This reads editor.selectionStart rather than computing a pixel-to-
+  // character position ourselves -- a plain <textarea> has no API for
+  // that, but the browser already places the caret at the clicked
+  // character as part of completely normal single-click handling, which
+  // works fine even when the browser's *double*-click handling doesn't.
+  // ---------------------------------------------------------------
+
+  let lastClickTime = 0;
+  let lastClickPos = -1;
+  const DOUBLE_CLICK_MS = 400;
+
+  function selectWordAt(pos) {
+    const text = editor.value;
+    const isWordChar = (ch) => ch !== undefined && !/\s/.test(ch);
+    let start = pos, end = pos;
+    // pos can land on either side of the intended character (an
+    // insertion-point ambiguity, not a character index) -- check both
+    // neighbors rather than just one, same reasoning as the VR text
+    // editor project's own word-select fix for the identical issue.
+    if (!isWordChar(text[pos]) && isWordChar(text[pos - 1])) {
+      start = end = pos - 1;
+    }
+    if (!isWordChar(text[start])) return; // clicked on whitespace with nothing adjacent
+    while (start > 0 && isWordChar(text[start - 1])) start--;
+    while (end < text.length && isWordChar(text[end])) end++;
+    editor.selectionStart = start;
+    editor.selectionEnd = end;
+  }
+
+  editor.addEventListener("click", () => {
+    const now = Date.now();
+    const pos = editor.selectionStart;
+    if (now - lastClickTime < DOUBLE_CLICK_MS && pos === lastClickPos) {
+      selectWordAt(pos);
+      lastClickTime = 0; // consumed -- a third rapid click starts fresh, not a "triple click"
+    } else {
+      lastClickTime = now;
+      lastClickPos = pos;
+    }
+  });
+
+  // ---------------------------------------------------------------
+  // Menus (File / Edit)
+  // ---------------------------------------------------------------
+
+  function setupMenu(buttonId, dropdownId) {
+    const button = document.getElementById(buttonId);
+    const dropdown = document.getElementById(dropdownId);
+    button.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const wasOpen = dropdown.classList.contains("open");
+      closeAllMenus();
+      if (!wasOpen) {
+        dropdown.classList.add("open");
+        button.classList.add("open");
+      }
+    });
+  }
+
+  function closeAllMenus() {
+    document.querySelectorAll(".menu-dropdown.open").forEach((el) => el.classList.remove("open"));
+    document.querySelectorAll(".menu-button.open").forEach((el) => el.classList.remove("open"));
+  }
+
+  document.addEventListener("click", closeAllMenus);
+
+  setupMenu("file-menu-button", "file-menu");
+
+  // ---------------------------------------------------------------
+  // Modals
+  // ---------------------------------------------------------------
+
+  function openModal(id) { document.getElementById(id).classList.add("open"); }
+  function closeModal(id) { document.getElementById(id).classList.remove("open"); }
+
+  document.querySelectorAll("[data-close]").forEach((el) => {
+    el.addEventListener("click", () => closeModal(el.getAttribute("data-close")));
+  });
+  document.querySelectorAll(".overlay").forEach((overlay) => {
+    if (overlay.id === "auth-overlay") return; // mandatory -- no backdrop dismiss
+    overlay.addEventListener("click", (e) => {
+      if (e.target === overlay) overlay.classList.remove("open");
+    });
+  });
+
+  // ---------------------------------------------------------------
+  // Display mode (Markdown source / Rich Text preview)
+  // ---------------------------------------------------------------
+
+  function setMode(mode) {
+    state.mode = mode;
+    const toggleBtn = document.getElementById("mode-toggle-btn");
+    const isPreview = mode === "rich_text";
+    toggleBtn.classList.toggle("active", isPreview);
+    toggleBtn.title = isPreview ? "Back to Markdown source" : "Show Rich Text preview";
+    editor.style.display = mode === "markdown" ? "block" : "none";
+    preview.style.display = mode === "rich_text" ? "block" : "none";
+    if (mode === "rich_text") {
+      previewInner.innerHTML = renderMarkdown(editor.value);
+    }
+  }
+
+  document.getElementById("mode-toggle-btn").addEventListener("click", () => {
+    setMode(state.mode === "markdown" ? "rich_text" : "markdown");
+  });
+
+  // ---------------------------------------------------------------
+  // Markdown -> HTML rendering
+  // ---------------------------------------------------------------
+
+  function escapeHtml(str) {
+    return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  }
+
+  function inlineMarkdown(line) {
+    // Links/URLs are pulled out into placeholders first so bold/italic
+    // markers (*, _) inside URLs don't get misinterpreted.
+    const placeholders = [];
+    function stash(html) {
+      placeholders.push(html);
+      return "\u0000" + (placeholders.length - 1) + "\u0000";
+    }
+
+    line = line.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, (_, text, url) =>
+      stash(`<a href="${url}" target="_blank" rel="noopener">${text}</a>`)
+    );
+    line = line.replace(/https?:\/\/[^\s<]+/g, (url) =>
+      stash(`<a href="${url}" target="_blank" rel="noopener">${url}</a>`)
+    );
+
+    line = line.replace(/\*\*(.+?)\*\*|__(.+?)__/g, (_, a, b) => `<strong>${a || b}</strong>`);
+    line = line.replace(/\*(.+?)\*|_(.+?)_/g, (_, a, b) => `<em>${a || b}</em>`);
+    line = line.replace(/`([^`]+)`/g, "<code>$1</code>");
+
+    line = line.replace(/\u0000(\d+)\u0000/g, (_, i) => placeholders[Number(i)]);
+    return line;
+  }
+
+  // 2 spaces (or 1 tab) per level, matching the editor's own Tab/Indent
+  // step (LIST_INDENT) -- so a checkbox or bullet indented one Tab in
+  // the Markdown source renders one level deeper in the preview too.
+  function listIndentLevel(indent) {
+    const normalized = indent.replace(/\t/g, "  ");
+    return Math.min(6, Math.floor(normalized.length / 2));
+  }
+
+  function renderMarkdown(source) {
+    const lines = escapeHtml(source).split("\n");
+    const out = [];
+    let listKind = null; // null | "plain" | "task" -- tracks which <ul> variant is currently open
+    let paragraph = [];
+
+    function flushParagraph() {
+      if (paragraph.length) {
+        out.push(`<p>${inlineMarkdown(paragraph.join(" "))}</p>`);
+        paragraph = [];
+      }
+    }
+    function closeListIfOpen() {
+      if (listKind) { out.push("</ul>"); listKind = null; }
+    }
+
+    for (let idx = 0; idx < lines.length; idx++) {
+      const rawLine = lines[idx];
+      const line = rawLine.trimEnd();
+
+      if (line.trim() === "") { flushParagraph(); closeListIfOpen(); continue; }
+
+      let m;
+      if ((m = line.match(/^(#{1,3})\s+(.*)$/))) {
+        flushParagraph(); closeListIfOpen();
+        const level = m[1].length;
+        out.push(`<h${level}>${inlineMarkdown(m[2])}</h${level}>`);
+      } else if (/^(-{3,}|\*{3,})$/.test(line.trim())) {
+        flushParagraph(); closeListIfOpen();
+        out.push("<hr>");
+      } else if ((m = line.match(/^>\s?(.*)$/))) {
+        flushParagraph(); closeListIfOpen();
+        out.push(`<blockquote>${inlineMarkdown(m[1])}</blockquote>`);
+      } else if ((m = line.match(CHECKBOX_RE))) {
+        flushParagraph();
+        // A checklist line immediately after a plain-bullet line (no
+        // blank line between them), or vice versa, needs a fresh <ul>
+        // of the right kind -- reusing whichever list happened to
+        // already be open would either drop the task-list styling
+        // (showing a stray bullet marker next to the checkbox) or
+        // strip a plain bullet's own marker.
+        if (listKind !== "task") { closeListIfOpen(); out.push('<ul class="task-list">'); listKind = "task"; }
+        const indentLevel = listIndentLevel(m[1]);
+        const checked = m[3].toLowerCase() === "x";
+        out.push(
+          `<li class="task-item" style="margin-left:${indentLevel * 20}px">` +
+          `<label><input type="checkbox" class="task-checkbox" data-line="${idx}"` +
+          `${checked ? " checked" : ""}><span>${inlineMarkdown(m[4])}</span></label></li>`
+        );
+      } else if ((m = line.match(BULLET_RE))) {
+        flushParagraph();
+        if (listKind !== "plain") { closeListIfOpen(); out.push("<ul>"); listKind = "plain"; }
+        const indentLevel = listIndentLevel(m[1]);
+        out.push(`<li style="margin-left:${indentLevel * 20}px">${inlineMarkdown(m[3])}</li>`);
+      } else {
+        closeListIfOpen();
+        paragraph.push(line);
+      }
+    }
+    flushParagraph();
+    closeListIfOpen();
+    return out.join("\n");
+  }
+
+  // Clicking (or tapping the label text next to) a rendered checkbox
+  // flips the matching "[ ]"/"[x]" in the underlying Markdown source by
+  // line number, rather than re-rendering the whole preview -- keeps
+  // the preview's scroll position stable instead of jumping on every
+  // check/uncheck.
+  previewInner.addEventListener("click", (e) => {
+    const checkbox = e.target.closest(".task-checkbox");
+    if (!checkbox) return;
+    const lineIdx = parseInt(checkbox.dataset.line, 10);
+    if (Number.isNaN(lineIdx)) return;
+    const lines = editor.value.split("\n");
+    if (lineIdx < 0 || lineIdx >= lines.length) return;
+    const m = lines[lineIdx].match(CHECKBOX_RE);
+    if (!m) return;
+    const newMark = checkbox.checked ? "x" : " ";
+    lines[lineIdx] = `${m[1]}${m[2]} [${newMark}] ${m[4]}`;
+    editor.value = lines.join("\n");
+    markModified();
+  });
+
+  // ---------------------------------------------------------------
+  // New document
+  // ---------------------------------------------------------------
+
+  function confirmDiscardIfNeeded(actionLabel) {
+    if (!state.modified) return true;
+    return window.confirm(`You have unsaved changes. ${actionLabel} anyway?`);
+  }
+
+  document.getElementById("menu-new").addEventListener("click", () => {
+    if (!confirmDiscardIfNeeded("Start a new document")) return;
+    editor.value = "";
+    state.filename = "";
+    state.notebook = null;
+    state.source = "";
+    state.modified = false;
+    if (state.mode === "rich_text") previewInner.innerHTML = "";
+    refreshStatusLabel();
+    saveDraftToSession();
+  });
+
+  async function openNote(notebook, name) {
+    if (!confirmDiscardIfNeeded("Open a different note")) return;
+    try {
+      const res = await fetch(`/api/notes/content?notebook=${encodeURIComponent(notebook)}&name=${encodeURIComponent(name)}`);
+      if (res.status === 401) { showAuth(); return; }
+      if (!res.ok) throw new Error("not found");
+      const text = await res.text();
+      editor.value = text;
+      state.filename = name;
+      state.notebook = notebook;
+      state.source = "server";
+      state.modified = false;
+      if (state.mode === "rich_text") previewInner.innerHTML = renderMarkdown(text);
+      showTransientStatus(`Opened ${notebook} / ${displayNoteName(name)}`);
+      saveDraftToSession();
+      highlightActiveNote();
+    } catch (err) {
+      showTransientStatus(`Couldn't load ${displayNoteName(name)}`);
+    }
+  }
+
+  // ---------------------------------------------------------------
+  // Import local file -- a real <input type=file>, works natively, no
+  // workarounds needed at all (unlike the VR/canvas version, a normal
+  // webpage doesn't have any trusted-activation issues with this).
+  // Unlike the old "Open Local File," this saves straight into a
+  // notebook (the one currently open, or a chosen/new one if none is)
+  // rather than just loading the text into an unsaved local buffer.
+  // ---------------------------------------------------------------
+
+  const localFileInput = document.getElementById("local-file-input");
+
+  document.getElementById("menu-import-local").addEventListener("click", () => {
+    if (!confirmDiscardIfNeeded("Import a different file")) return;
+    localFileInput.click();
+  });
+
+  localFileInput.addEventListener("change", () => {
+    const file = localFileInput.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => importLocalFile(file.name, reader.result);
+    reader.readAsText(file);
+    localFileInput.value = "";
+  });
+
+  async function importLocalFile(originalName, content) {
+    let notebook = treeState.view === "notes" ? treeState.currentNotebook : null;
+    if (!notebook) {
+      const existing = treeState.notebooksCache.filter((nb) => !nb.hidden).map((nb) => nb.name);
+      const suggestion = existing[0] || "Imported";
+      const label = existing.length
+        ? `Import into which notebook? (existing: ${existing.join(", ")} -- or type a new name to create one)`
+        : "Import into which notebook? (this will create it)";
+      const input = window.prompt(label, suggestion);
+      if (!input || !input.trim()) return;
+      notebook = input.trim();
+    }
+
+    let filename = originalName.trim();
+    if (!filename.toLowerCase().endsWith(".txt")) filename += ".txt";
+
+    try {
+      const res = await fetch(
+        `/api/notes/save?notebook=${encodeURIComponent(notebook)}&name=${encodeURIComponent(filename)}`,
+        { method: "POST", body: content }
+      );
+      if (res.status === 401) { showAuth(); return; }
+      if (!res.ok) throw new Error("import failed");
+      editor.value = content;
+      state.filename = filename;
+      state.notebook = notebook;
+      state.source = "server";
+      state.modified = false;
+      if (state.mode === "rich_text") previewInner.innerHTML = renderMarkdown(content);
+      showTransientStatus(`Imported into ${notebook} / ${displayNoteName(filename)}`);
+      saveDraftToSession();
+      await loadNotebooks();
+      if (treeState.view === "notes" && treeState.currentNotebook === notebook) {
+        await loadNotes(notebook);
+      }
+    } catch (err) {
+      showTransientStatus("Couldn't import the file");
+    }
+  }
+
+  // ---------------------------------------------------------------
+  // Save (Upload to Server)
+  // ---------------------------------------------------------------
+
+  async function saveToServer(options) {
+    const opts = options || {};
+    let filename = state.filename;
+    if (!filename) {
+      if (opts.silent) return; // never prompt from a background/silent save
+      const input = window.prompt("Save as (note title):", "untitled.txt");
+      if (!input) return;
+      filename = input.trim();
+      if (!filename.toLowerCase().endsWith(".txt")) filename += ".txt";
+    }
+
+    let notebook = state.notebook || treeState.currentNotebook;
+    if (!notebook) {
+      if (opts.silent) return;
+      const suggestion = treeState.notebooksCache[0] ? treeState.notebooksCache[0].name : "General";
+      const input = window.prompt("Save into which notebook? (existing name, or a new one):", suggestion);
+      if (!input || !input.trim()) return;
+      notebook = input.trim();
+    }
+
+    try {
+      const res = await fetch(
+        `/api/notes/save?notebook=${encodeURIComponent(notebook)}&name=${encodeURIComponent(filename)}`,
+        { method: "POST", body: editor.value }
+      );
+      if (res.status === 401) { showAuth(); return; }
+      if (!res.ok) throw new Error("save failed");
+      state.filename = filename;
+      state.notebook = notebook;
+      state.source = "server";
+      state.modified = false;
+      lastSavedAt = new Date();
+      if (!opts.silent) {
+        showTransientStatus(`Saved to ${notebook} / ${displayNoteName(filename)}`);
+      }
+      refreshStatusLabel();
+      saveDraftToSession();
+      syncShareIfActive(notebook, filename); // fire-and-forget -- no-op unless already shared
+      await loadNotebooks();
+      if (treeState.view === "notes" && treeState.currentNotebook === notebook) {
+        await loadNotes(notebook);
+      }
+    } catch (err) {
+      if (!opts.silent) showTransientStatus("Couldn't save to the server");
+    }
+  }
+
+  // ---------------------------------------------------------------
+  // Download a copy -- native Blob + <a download>, reliable everywhere.
+  // ---------------------------------------------------------------
+
+  function downloadCopy() {
+    const filename = state.filename || "untitled.txt";
+    const blob = new Blob([editor.value], { type: "text/plain" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    showTransientStatus(`Downloaded: ${filename}`);
+  }
+
+  document.getElementById("menu-download").addEventListener("click", downloadCopy);
+
+  // ---------------------------------------------------------------
+  // Quick-save button (top bar) -- does whichever of the two above
+  // Settings says to (defaults to saving to the server), for one-click
+  // access without going through the File menu.
+  // ---------------------------------------------------------------
+
+  document.getElementById("save-button").addEventListener("click", () => {
+    if (settings.save_button_action === "download") {
+      downloadCopy();
+    } else {
+      saveToServer();
+    }
+  });
+
+  // Native Ctrl+C/Ctrl+X/Ctrl+V and right-click cut/copy/paste already
+  // work without any code here, since editor is a real <textarea> --
+  // no custom Cut/Copy menu needed.
+
+  // Ctrl+S -> save, instead of the browser's own "Save Page" dialog.
+  window.addEventListener("keydown", (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
+      e.preventDefault();
+      saveToServer();
+    }
+  });
+
+  // ---------------------------------------------------------------
+  // Notebook / note tree (sidebar)
+  // ---------------------------------------------------------------
+
+  function highlightActiveNote() {
+    document.querySelectorAll("#tree-list .tree-row-btn").forEach((btn) => {
+      btn.classList.toggle(
+        "active",
+        treeState.view === "notes" &&
+          state.notebook === treeState.currentNotebook &&
+          btn.dataset.name === state.filename
+      );
+    });
+  }
+
+  async function loadNotebooks() {
+    try {
+      const res = await fetch("/api/notebooks");
+      if (res.status === 401) { showAuth(); return; }
+      const data = await res.json();
+      treeState.notebooksCache = data.notebooks || [];
+    } catch (err) {
+      treeState.notebooksCache = [];
+    }
+    renderTree();
+  }
+
+  async function loadNotes(notebook) {
+    try {
+      const res = await fetch(`/api/notes?notebook=${encodeURIComponent(notebook)}`);
+      if (res.status === 401) { showAuth(); return; }
+      if (!res.ok) { treeState.notesCache = []; renderTree(); return; }
+      const data = await res.json();
+      treeState.notesCache = data.notes || [];
+    } catch (err) {
+      treeState.notesCache = [];
+    }
+    renderTree();
+  }
+
+  async function openNotebook(name) {
+    treeState.view = "notes";
+    treeState.currentNotebook = name;
+    await loadNotes(name);
+  }
+
+  function displayNoteName(name) {
+    return name.replace(/\.txt$/i, "");
+  }
+
+  function makeTreeRow(name, kind, onOpen, displayName) {
+    const li = document.createElement("li");
+    li.className = "tree-row";
+    const handle = document.createElement("span");
+    handle.className = "tree-drag-handle";
+    handle.title = "Drag to reorder";
+    handle.innerHTML =
+      '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor">' +
+      '<circle cx="9" cy="6" r="1.4"></circle><circle cx="15" cy="6" r="1.4"></circle>' +
+      '<circle cx="9" cy="12" r="1.4"></circle><circle cx="15" cy="12" r="1.4"></circle>' +
+      '<circle cx="9" cy="18" r="1.4"></circle><circle cx="15" cy="18" r="1.4"></circle>' +
+      "</svg>";
+    handle.addEventListener("pointerdown", (e) => {
+      e.preventDefault();
+      try { handle.setPointerCapture(e.pointerId); } catch (err) { /* not critical if unsupported */ }
+      startTreeDrag(li, kind, e, handle);
+    });
+    const btn = document.createElement("button");
+    btn.className = "tree-row-btn";
+    btn.textContent = displayName !== undefined ? displayName : name;
+    btn.dataset.name = name;
+    btn.addEventListener("click", onOpen);
+    const kebab = document.createElement("button");
+    kebab.className = "tree-kebab";
+    kebab.textContent = "\u22EF";
+    kebab.title = "More";
+    kebab.addEventListener("click", (e) => {
+      e.stopPropagation();
+      openTreeContextMenu(kebab, kind, name);
+    });
+    li.appendChild(handle);
+    li.appendChild(btn);
+    li.appendChild(kebab);
+    return li;
+  }
+
+  // ---------------------------------------------------------------
+  // Drag-to-reorder (notebooks in the notebooks list, notes within a
+  // notebook) -- pointer events rather than the HTML5 drag-and-drop
+  // API, since native drag-and-drop has no real touch support in most
+  // mobile browsers and this app has a mobile UI to support. Works the
+  // same way for mouse and touch. The new order is persisted to the
+  // account server-side (/api/notebooks/reorder, /api/notes/reorder),
+  // so it's the same on every device rather than a local-only setting.
+  // ---------------------------------------------------------------
+
+  function startTreeDrag(li, kind, startEvent, handle) {
+    const list = document.getElementById("tree-list");
+    const placeholder = document.createElement("li");
+    placeholder.className = "tree-row-placeholder";
+    const pointerId = startEvent.pointerId;
+
+    li.classList.add("dragging");
+    document.body.classList.add("tree-dragging");
+    list.insertBefore(placeholder, li.nextSibling);
+
+    function onMove(e) {
+      if (e.pointerId !== undefined && e.pointerId !== pointerId) return;
+      e.preventDefault();
+      const y = e.clientY;
+      const rows = Array.from(list.querySelectorAll(".tree-row:not(.dragging)"));
+      let target = null;
+      for (const row of rows) {
+        const rect = row.getBoundingClientRect();
+        if (y < rect.top + rect.height / 2) { target = row; break; }
+      }
+      if (target) list.insertBefore(placeholder, target);
+      else list.appendChild(placeholder);
+    }
+
+    function onUp() {
+      document.removeEventListener("pointermove", onMove);
+      document.removeEventListener("pointerup", onUp);
+      document.removeEventListener("pointercancel", onUp);
+      if (handle) {
+        try { handle.releasePointerCapture(pointerId); } catch (err) { /* already released */ }
+      }
+      list.insertBefore(li, placeholder);
+      placeholder.remove();
+      li.classList.remove("dragging");
+      document.body.classList.remove("tree-dragging");
+      persistTreeOrder(kind);
+    }
+
+    document.addEventListener("pointermove", onMove);
+    document.addEventListener("pointerup", onUp);
+    document.addEventListener("pointercancel", onUp);
+    onMove(startEvent);
+  }
+
+  async function persistTreeOrder(kind) {
+    const names = Array.from(document.querySelectorAll("#tree-list .tree-row-btn")).map(
+      (btn) => btn.dataset.name
+    );
+    if (kind === "notebook") {
+      treeState.notebooksCache.sort((a, b) => names.indexOf(a.name) - names.indexOf(b.name));
+      try {
+        const res = await fetch("/api/notebooks/reorder", {
+          method: "POST", headers: jsonHeaders(), body: JSON.stringify({ order: names }),
+        });
+        if (res.status === 401) { showAuth(); return; }
+        if (!res.ok) throw new Error("reorder failed");
+      } catch (err) {
+        showTransientStatus("Couldn't save the new order");
+      }
+    } else {
+      treeState.notesCache.sort((a, b) => names.indexOf(a.name) - names.indexOf(b.name));
+      try {
+        const res = await fetch("/api/notes/reorder", {
+          method: "POST", headers: jsonHeaders(),
+          body: JSON.stringify({ notebook: treeState.currentNotebook, order: names }),
+        });
+        if (res.status === 401) { showAuth(); return; }
+        if (!res.ok) throw new Error("reorder failed");
+      } catch (err) {
+        showTransientStatus("Couldn't save the new order");
+      }
+    }
+  }
+
+  function renderTree() {
+    const list = document.getElementById("tree-list");
+    const empty = document.getElementById("tree-empty");
+    const backBtn = document.getElementById("sidebar-back");
+    const title = document.getElementById("sidebar-title");
+    const newBtn = document.getElementById("sidebar-new-item");
+    list.innerHTML = "";
+
+    if (treeState.view === "notebooks") {
+      backBtn.style.display = "none";
+      title.textContent = "Notebooks";
+      newBtn.textContent = "+ New Notebook";
+      const visible = treeState.notebooksCache.filter((nb) => !nb.hidden);
+      empty.textContent = "No notebooks yet.";
+      empty.style.display = visible.length ? "none" : "block";
+      visible.forEach((nb) => {
+        list.appendChild(makeTreeRow(nb.name, "notebook", () => openNotebook(nb.name)));
+      });
+    } else {
+      backBtn.style.display = "inline-flex";
+      title.textContent = treeState.currentNotebook || "Notes";
+      newBtn.textContent = "+ New Note";
+      const visible = treeState.notesCache.filter((n) => !n.hidden);
+      empty.textContent = "No notes yet.";
+      empty.style.display = visible.length ? "none" : "block";
+      visible.forEach((n) => {
+        list.appendChild(makeTreeRow(n.name, "note", async () => {
+          await openNote(treeState.currentNotebook, n.name);
+          if (isMobileUI()) closeMobileDrawer();
+        }, displayNoteName(n.name)));
+      });
+    }
+    highlightActiveNote();
+  }
+
+  document.getElementById("sidebar-back").addEventListener("click", () => {
+    treeState.view = "notebooks";
+    treeState.currentNotebook = null;
+    renderTree();
+  });
+
+  document.getElementById("sidebar-collapse").addEventListener("click", () => {
+    if (isMobileUI()) {
+      closeMobileDrawer();
+    } else {
+      document.getElementById("sidebar").classList.toggle("collapsed");
+    }
+  });
+
+  document.getElementById("sidebar-new-item").addEventListener("click", async () => {
+    if (treeState.view === "notebooks") {
+      const name = window.prompt("New notebook name:");
+      if (!name || !name.trim()) return;
+      try {
+        const res = await fetch("/api/notebooks", {
+          method: "POST", headers: jsonHeaders(), body: JSON.stringify({ name: name.trim() }),
+        });
+        const data = await res.json();
+        if (!res.ok) { showTransientStatus(data.error || "Couldn't create notebook"); return; }
+        await loadNotebooks();
+      } catch (err) {
+        showTransientStatus("Couldn't reach the server");
+      }
+    } else {
+      if (!confirmDiscardIfNeeded("Start a new note")) return;
+      const name = window.prompt("New note name:", "Untitled");
+      if (!name || !name.trim()) return;
+      let filename = name.trim();
+      if (!filename.toLowerCase().endsWith(".txt")) filename += ".txt";
+      editor.value = "";
+      state.filename = filename;
+      state.notebook = treeState.currentNotebook;
+      state.source = "server";
+      state.modified = false;
+      if (state.mode === "rich_text") previewInner.innerHTML = "";
+      refreshStatusLabel();
+      saveDraftToSession();
+      showTransientStatus("New note -- save to create it on the server");
+      highlightActiveNote();
+      if (isMobileUI()) closeMobileDrawer();
+    }
+  });
+
+  // -- per-item context menu (rename / hide / delete) --------------------
+
+  function closeTreeContextMenu() {
+    const existing = document.getElementById("tree-context-menu");
+    if (existing) existing.remove();
+  }
+
+  function openTreeContextMenu(anchorEl, kind, name) {
+    closeTreeContextMenu();
+    const menu = document.createElement("div");
+    menu.className = "tree-context-menu";
+    menu.id = "tree-context-menu";
+
+    const items = [
+      { label: "Rename", action: () => renameTreeItem(kind, name) },
+      { label: "Share", action: () => shareTreeItem(kind, name) },
+      { label: "Hide", action: () => setHidden(kind, name, true, treeState.currentNotebook) },
+      { label: "Delete", danger: true, action: () => deleteTreeItem(kind, name) },
+    ];
+    items.forEach((it) => {
+      const b = document.createElement("button");
+      b.className = "tree-context-item" + (it.danger ? " danger" : "");
+      b.textContent = it.label;
+      b.addEventListener("click", () => { closeTreeContextMenu(); it.action(); });
+      menu.appendChild(b);
+    });
+
+    document.body.appendChild(menu);
+    const rect = anchorEl.getBoundingClientRect();
+    const menuWidth = 160;
+    menu.style.top = rect.bottom + 4 + "px";
+    menu.style.left = Math.max(8, Math.min(rect.right - menuWidth, window.innerWidth - menuWidth - 8)) + "px";
+    setTimeout(() => document.addEventListener("click", closeTreeContextMenu, { once: true }), 0);
+  }
+
+  async function renameTreeItem(kind, name) {
+    const promptDefault = kind === "note" ? displayNoteName(name) : name;
+    const input = window.prompt(`Rename "${promptDefault}" to:`, promptDefault);
+    if (!input || !input.trim()) return;
+    const newName = input.trim();
+    if (kind === "notebook" && newName === name) return;
+    if (kind === "note" && newName === promptDefault) return;
+
+    if (kind === "notebook") {
+      const res = await fetch("/api/notebooks/rename", {
+        method: "POST", headers: jsonHeaders(), body: JSON.stringify({ old: name, new: newName }),
+      });
+      const data = await res.json();
+      if (!res.ok) { showTransientStatus(data.error || "Rename failed"); return; }
+      if (treeState.currentNotebook === name) treeState.currentNotebook = newName;
+      if (state.notebook === name) state.notebook = newName;
+      await loadNotebooks();
+    } else {
+      const filename = newName.toLowerCase().endsWith(".txt") ? newName : newName + ".txt";
+      const res = await fetch("/api/notes/rename", {
+        method: "POST", headers: jsonHeaders(),
+        body: JSON.stringify({ notebook: treeState.currentNotebook, old: name, new: filename }),
+      });
+      const data = await res.json();
+      if (!res.ok) { showTransientStatus(data.error || "Rename failed"); return; }
+      if (state.notebook === treeState.currentNotebook && state.filename === name) state.filename = filename;
+      await loadNotes(treeState.currentNotebook);
+    }
+    refreshStatusLabel();
+  }
+
+  async function setHidden(kind, name, hidden, notebookForNote) {
+    if (kind === "notebook") {
+      await fetch("/api/notebooks/hide", {
+        method: "POST", headers: jsonHeaders(), body: JSON.stringify({ name, hidden }),
+      });
+      await loadNotebooks();
+    } else {
+      await fetch("/api/notes/hide", {
+        method: "POST", headers: jsonHeaders(),
+        body: JSON.stringify({ notebook: notebookForNote, name, hidden }),
+      });
+      if (treeState.view === "notes" && treeState.currentNotebook === notebookForNote) {
+        await loadNotes(notebookForNote);
+      }
+    }
+    showTransientStatus(hidden ? `Hid "${name}"` : `Unhid "${name}"`);
+  }
+
+  function clearEditorIfShowing(notebook, filename) {
+    if (state.notebook === notebook && state.filename === filename) {
+      editor.value = "";
+      state.filename = "";
+      state.notebook = null;
+      state.source = "";
+      state.modified = false;
+      if (state.mode === "rich_text") previewInner.innerHTML = "";
+      refreshStatusLabel();
+      saveDraftToSession();
+    }
+  }
+
+  async function deleteTreeItem(kind, name) {
+    if (!window.confirm(`Delete "${name}"? This can't be undone.`)) return;
+    if (kind === "notebook") {
+      await fetch(`/api/notebooks?name=${encodeURIComponent(name)}`, { method: "DELETE" });
+      if (state.notebook === name) clearEditorIfShowing(name, state.filename);
+      if (treeState.currentNotebook === name) {
+        treeState.view = "notebooks";
+        treeState.currentNotebook = null;
+      }
+      await loadNotebooks();
+    } else {
+      const notebook = treeState.currentNotebook;
+      await fetch(`/api/notes?notebook=${encodeURIComponent(notebook)}&name=${encodeURIComponent(name)}`, {
+        method: "DELETE",
+      });
+      clearEditorIfShowing(notebook, name);
+      await loadNotes(notebook);
+    }
+  }
+
+  // ---------------------------------------------------------------
+  // Sharing -- generates a fully self-contained static HTML page
+  // client-side (reusing the same renderMarkdown() already used for
+  // Rich Text preview, so a shared note looks the same as it does in
+  // the app) and hands it to the server purely to store and serve
+  // back out from a random, unguessable URL. Only ever reachable from
+  // the normal tree's "..." menu, which -- by construction -- never
+  // lists a hidden notebook or note in the first place, so there's no
+  // separate "is this hidden" check needed here.
+  // ---------------------------------------------------------------
+
+  const SHARED_PAGE_STYLE = `
+    :root { color-scheme: dark; }
+    body {
+      margin: 0; padding: 48px 20px 80px;
+      background: #1b1a17; color: #eae6df;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+      line-height: 1.65;
+    }
+    main { max-width: 680px; margin: 0 auto; }
+    h1 { font-size: 28px; margin: 0 0 28px; border-bottom: 1px solid #3a382f; padding-bottom: 16px; }
+    h2, h3 { color: #eae6df; }
+    a { color: #7fa8bb; }
+    p { margin: 0 0 1em; }
+    ul { padding-left: 1.4em; }
+    ul.task-list { list-style: none; padding-left: 0; }
+    .task-item { display: flex; align-items: flex-start; gap: 9px; margin: 0.35em 0; }
+    .task-item input[type="checkbox"] { margin-top: 5px; width: 15px; height: 15px; flex-shrink: 0; }
+    .task-item input[type="checkbox"]:checked + span { color: #9c988d; text-decoration: line-through; }
+    blockquote { margin: 0 0 1em; padding: 2px 16px; border-left: 3px solid #3a382f; color: #b8b3a6; }
+    code { background: #2a2822; padding: 0.15em 0.4em; border-radius: 4px; font-size: 0.9em; }
+    hr { border: none; border-top: 1px solid #3a382f; margin: 2em 0; }
+    ul.note-links { list-style: none; padding: 0; }
+    ul.note-links li { margin: 10px 0; }
+    ul.note-links a {
+      display: block; padding: 12px 16px; background: #24221d; border-radius: 8px;
+      text-decoration: none; font-size: 15px;
+    }
+    ul.note-links a:hover { background: #2a2822; }
+    footer {
+      max-width: 680px; margin: 48px auto 0; padding-top: 16px;
+      border-top: 1px solid #3a382f; color: #9c988d; font-size: 13px;
+    }
+  `;
+
+  function buildSharedNotePage(title, bodyHtml, username) {
+    const readOnlyBody = bodyHtml.replace(
+      /<input type="checkbox" class="task-checkbox"/g,
+      '<input type="checkbox" class="task-checkbox" disabled'
+    );
+    // Skip the page's own title heading if the note's content already
+    // opens with an identical top-level heading -- a note starting
+    // with "# Title" would otherwise show the same title twice.
+    const titleHtml = escapeHtml(title);
+    const heading = readOnlyBody.startsWith(`<h1>${titleHtml}</h1>`) ? "" : `<h1>${titleHtml}</h1>\n`;
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>${titleHtml}</title>
+<style>${SHARED_PAGE_STYLE}</style>
+</head>
+<body>
+<main>
+${heading}${readOnlyBody}
+</main>
+<footer>Shared from InkWell by ${escapeHtml(username)}</footer>
+</body>
+</html>`;
+  }
+
+  function buildSharedNotebookPage(notebookName, entries, username) {
+    const links = entries
+      .map((e) => `<li><a href="${escapeHtml(e.path)}">${escapeHtml(e.title)}</a></li>`)
+      .join("\n");
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>${escapeHtml(notebookName)}</title>
+<style>${SHARED_PAGE_STYLE}</style>
+</head>
+<body>
+<main>
+<h1>${escapeHtml(notebookName)}</h1>
+<ul class="note-links">
+${links}
+</ul>
+</main>
+<footer>Shared from InkWell by ${escapeHtml(username)}</footer>
+</body>
+</html>`;
+  }
+
+  async function upsertShare(kind, notebook, name, html) {
+    try {
+      const body = { kind, notebook, html };
+      if (kind === "note") body.name = name;
+      const res = await fetch("/api/share", {
+        method: "POST", headers: jsonHeaders(), body: JSON.stringify(body),
+      });
+      if (res.status === 401) { showAuth(); return null; }
+      const data = await res.json();
+      if (!res.ok) { showTransientStatus(data.error || "Couldn't create the share link"); return null; }
+      return data.path;
+    } catch (err) {
+      showTransientStatus("Couldn't reach the server");
+      return null;
+    }
+  }
+
+  // Called after every note save (manual or auto). A no-op, silently,
+  // unless that exact note already has an active share -- never
+  // creates one on its own. Keeps an existing share link's content
+  // current without needing to re-share by hand every time.
+  async function syncShareIfActive(notebook, filename) {
+    try {
+      const title = displayNoteName(filename);
+      const pageHtml = buildSharedNotePage(title, renderMarkdown(editor.value), currentUser || "");
+      await fetch("/api/share/sync", {
+        method: "POST", headers: jsonHeaders(),
+        body: JSON.stringify({ notebook, name: filename, html: pageHtml }),
+      });
+    } catch (err) {
+      // Best effort -- a failed background sync shouldn't surface as
+      // an error over what was otherwise a successful save.
+    }
+  }
+
+  async function copyShareLink(url, successMessage) {
+    try {
+      if (!navigator.clipboard || !window.isSecureContext) throw new Error("clipboard unavailable");
+      await navigator.clipboard.writeText(url);
+      showTransientStatus(successMessage);
+    } catch (err) {
+      window.prompt("Copy this share link:", url);
+    }
+  }
+
+  function shareTreeItem(kind, name) {
+    if (kind === "notebook") shareNotebook(name);
+    else shareNote(treeState.currentNotebook, name);
+  }
+
+  async function shareNote(notebook, name) {
+    showTransientStatus("Creating share link…");
+    try {
+      const res = await fetch(`/api/notes/content?notebook=${encodeURIComponent(notebook)}&name=${encodeURIComponent(name)}`);
+      if (res.status === 401) { showAuth(); return; }
+      if (!res.ok) { showTransientStatus("Couldn't load the note to share"); return; }
+      const text = await res.text();
+      const title = displayNoteName(name);
+      const pageHtml = buildSharedNotePage(title, renderMarkdown(text), currentUser || "");
+      const path = await upsertShare("note", notebook, name, pageHtml);
+      if (!path) return;
+      await copyShareLink(`${window.location.origin}${path}`, `Share link for "${title}" copied to clipboard`);
+    } catch (err) {
+      showTransientStatus("Couldn't create the share link");
+    }
+  }
+
+  async function shareNotebook(notebookName) {
+    showTransientStatus(`Sharing "${notebookName}"…`);
+    try {
+      const res = await fetch(`/api/notes?notebook=${encodeURIComponent(notebookName)}`);
+      if (res.status === 401) { showAuth(); return; }
+      if (!res.ok) { showTransientStatus("Couldn't load the notebook to share"); return; }
+      const data = await res.json();
+      // Already excludes hidden notes (and comes back in tree order,
+      // same as the sidebar) -- filtering again here is just a second,
+      // cheap layer of the same "never share hidden things" intent.
+      const notes = (data.notes || []).filter((n) => !n.hidden);
+      if (notes.length === 0) {
+        showTransientStatus("This notebook has no notes to share yet");
+        return;
+      }
+
+      const entries = [];
+      for (const note of notes) {
+        const contentRes = await fetch(
+          `/api/notes/content?notebook=${encodeURIComponent(notebookName)}&name=${encodeURIComponent(note.name)}`
+        );
+        if (!contentRes.ok) continue; // skip anything that fails rather than aborting the whole share
+        const text = await contentRes.text();
+        const title = displayNoteName(note.name);
+        const pageHtml = buildSharedNotePage(title, renderMarkdown(text), currentUser || "");
+        // Reuses that note's existing share link if it already has
+        // one (e.g. from a previous notebook share, or from having
+        // been shared individually) instead of minting a duplicate.
+        const path = await upsertShare("note", notebookName, note.name, pageHtml);
+        if (path) entries.push({ title, path });
+      }
+      if (entries.length === 0) {
+        showTransientStatus("Couldn't share any notes in this notebook");
+        return;
+      }
+
+      const indexHtml = buildSharedNotebookPage(notebookName, entries, currentUser || "");
+      const indexPath = await upsertShare("notebook", notebookName, null, indexHtml);
+      if (!indexPath) return;
+      await copyShareLink(
+        `${window.location.origin}${indexPath}`,
+        `Share link for "${notebookName}" copied to clipboard`
+      );
+    } catch (err) {
+      showTransientStatus("Couldn't create the share link");
+    }
+  }
+
+  // -- search: always available for non-hidden items; the eye icon
+  //    toggles whether hidden notebooks/notes are *included* in the
+  //    results (gated behind the PIN), rather than the search box
+  //    itself being hidden until unlocked -----------------------------
+
+  let lastTreeSearchQuery = "";
+
+  function updateEyeIcon() {
+    const btn = document.getElementById("hidden-eye");
+    btn.classList.toggle("unlocked", hiddenUnlocked);
+    btn.title = hiddenUnlocked
+      ? "Hide hidden items from search results again"
+      : "Include hidden notebooks/notes in search";
+  }
+
+  document.getElementById("hidden-eye").addEventListener("click", async () => {
+    if (hiddenUnlocked) {
+      hiddenUnlocked = false;
+      updateEyeIcon();
+      runTreeSearch(lastTreeSearchQuery);
+      return;
+    }
+    let statusData = { has_pin: false };
+    try {
+      const res = await fetch("/api/pin/status");
+      if (res.status === 401) { showAuth(); return; }
+      statusData = await res.json();
+    } catch (err) { /* fall through -- treated as no PIN set */ }
+
+    if (!statusData.has_pin) {
+      showTransientStatus("Set a privacy PIN in Settings first");
+      populateSettingsForm();
+      openModal("settings-overlay");
+      return;
+    }
+    document.getElementById("pin-input").value = "";
+    document.getElementById("pin-error").style.display = "none";
+    openModal("pin-overlay");
+    setTimeout(() => document.getElementById("pin-input").focus(), 50);
+  });
+
+  async function submitPin() {
+    const pin = document.getElementById("pin-input").value.trim();
+    const errEl = document.getElementById("pin-error");
+    errEl.style.display = "none";
+    if (!/^\d{4}$/.test(pin)) {
+      errEl.textContent = "Enter exactly 4 digits.";
+      errEl.style.display = "block";
+      return;
+    }
+    try {
+      const res = await fetch("/api/pin/verify", {
+        method: "POST", headers: jsonHeaders(), body: JSON.stringify({ pin }),
+      });
+      const data = await res.json();
+      if (res.ok && data.ok) {
+        hiddenUnlocked = true;
+        closeModal("pin-overlay");
+        document.getElementById("pin-input").value = "";
+        updateEyeIcon();
+        runTreeSearch(lastTreeSearchQuery);
+        document.getElementById("tree-search").focus();
+      } else {
+        errEl.textContent = data.error || "Incorrect PIN.";
+        errEl.style.display = "block";
+      }
+    } catch (err) {
+      errEl.textContent = "Couldn't reach the server.";
+      errEl.style.display = "block";
+    }
+  }
+  document.getElementById("pin-submit").addEventListener("click", submitPin);
+  document.getElementById("pin-input").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") submitPin();
+  });
+
+  let treeSearchDebounce = null;
+  document.getElementById("tree-search").addEventListener("input", (e) => {
+    clearTimeout(treeSearchDebounce);
+    const q = e.target.value.trim();
+    treeSearchDebounce = setTimeout(() => runTreeSearch(q), 200);
+  });
+
+  async function runTreeSearch(q) {
+    lastTreeSearchQuery = q;
+    const resultsEl = document.getElementById("tree-search-results");
+    if (!q) { resultsEl.style.display = "none"; resultsEl.innerHTML = ""; return; }
+    let data;
+    try {
+      const res = await fetch(`/api/search?q=${encodeURIComponent(q)}`);
+      if (res.status === 401) { showAuth(); return; }
+      data = await res.json();
+    } catch (err) {
+      return;
+    }
+    resultsEl.innerHTML = "";
+    // Hidden items only surface once the eye icon has been unlocked
+    // with the PIN -- otherwise this is a plain, always-available
+    // search over the normal (non-hidden) notebooks/notes.
+    const items = [
+      ...(data.notebooks || [])
+        .filter((n) => hiddenUnlocked || !n.hidden)
+        .map((n) => ({ kind: "notebook", name: n.name, hidden: n.hidden })),
+      ...(data.notes || [])
+        .filter((n) => hiddenUnlocked || !n.hidden)
+        .map((n) => ({ kind: "note", name: n.name, notebook: n.notebook, hidden: n.hidden })),
+    ];
+    if (items.length === 0) {
+      resultsEl.innerHTML = '<div class="search-empty">No matches</div>';
+      resultsEl.style.display = "block";
+      return;
+    }
+    items.forEach((item) => {
+      const row = document.createElement("div");
+      row.className = "search-result-row";
+      const label = document.createElement("button");
+      label.className = "search-result-label";
+      const tag = item.kind === "notebook" ? "Notebook" : item.notebook;
+      const nameSpan = document.createElement("span");
+      nameSpan.className = "search-result-name";
+      nameSpan.textContent = item.kind === "note" ? displayNoteName(item.name) : item.name;
+      const tagSpan = document.createElement("span");
+      tagSpan.className = "search-result-tag";
+      tagSpan.textContent = tag + (item.hidden ? " · hidden" : "");
+      label.appendChild(nameSpan);
+      label.appendChild(tagSpan);
+      label.addEventListener("click", async () => {
+        if (item.kind === "notebook") {
+          treeState.view = "notes";
+          treeState.currentNotebook = item.name;
+          await loadNotes(item.name);
+        } else {
+          await openNote(item.notebook, item.name);
+          if (isMobileUI()) closeMobileDrawer();
+        }
+        clearTreeSearch();
+      });
+      row.appendChild(label);
+      if (item.hidden) {
+        const toggle = document.createElement("button");
+        toggle.className = "search-result-unhide";
+        toggle.textContent = "Unhide";
+        toggle.title = "Show in the normal list again";
+        toggle.addEventListener("click", async (e) => {
+          e.stopPropagation();
+          if (item.kind === "notebook") await setHidden("notebook", item.name, false);
+          else await setHidden("note", item.name, false, item.notebook);
+          runTreeSearch(q);
+        });
+        row.appendChild(toggle);
+      }
+      resultsEl.appendChild(row);
+    });
+    resultsEl.style.display = "block";
+  }
+
+  function clearTreeSearch() {
+    const input = document.getElementById("tree-search");
+    const resultsEl = document.getElementById("tree-search-results");
+    input.value = "";
+    lastTreeSearchQuery = "";
+    resultsEl.style.display = "none";
+    resultsEl.innerHTML = "";
+  }
+
+  // ---------------------------------------------------------------
+  // Accounts: sign in / register / sign out
+  // ---------------------------------------------------------------
+
+  function showAuth() {
+    document.getElementById("app-shell").style.display = "none";
+    document.getElementById("auth-overlay").classList.add("open");
+  }
+
+  let authMode = "login";
+  function setAuthMode(mode) {
+    authMode = mode;
+    document.getElementById("auth-tab-login").classList.toggle("active", mode === "login");
+    document.getElementById("auth-tab-register").classList.toggle("active", mode === "register");
+    document.getElementById("auth-password-confirm").style.display = mode === "register" ? "block" : "none";
+    document.getElementById("auth-submit").textContent = mode === "register" ? "Create Account" : "Sign In";
+    document.getElementById("auth-error").style.display = "none";
+  }
+  document.getElementById("auth-tab-login").addEventListener("click", () => setAuthMode("login"));
+  document.getElementById("auth-tab-register").addEventListener("click", () => setAuthMode("register"));
+
+  function showAuthError(msg) {
+    const el = document.getElementById("auth-error");
+    el.textContent = msg;
+    el.style.display = "block";
+  }
+
+  document.getElementById("auth-submit").addEventListener("click", async () => {
+    const username = document.getElementById("auth-username").value.trim();
+    const password = document.getElementById("auth-password").value;
+    if (!username || !password) { showAuthError("Enter a username and password."); return; }
+    if (authMode === "register") {
+      const confirmVal = document.getElementById("auth-password-confirm").value;
+      if (password !== confirmVal) { showAuthError("Passwords don't match."); return; }
+    }
+    const endpoint = authMode === "register" ? "/api/register" : "/api/login";
+    try {
+      const res = await fetch(endpoint, {
+        method: "POST", headers: jsonHeaders(), body: JSON.stringify({ username, password }),
+      });
+      const data = await res.json();
+      if (!res.ok) { showAuthError(data.error || "Something went wrong."); return; }
+      currentUser = data.username;
+      document.getElementById("auth-overlay").classList.remove("open");
+      document.getElementById("auth-username").value = "";
+      document.getElementById("auth-password").value = "";
+      document.getElementById("auth-password-confirm").value = "";
+      await enterApp();
+      if (authMode === "register") {
+        showTransientStatus("Account created -- set a PIN in Settings to enable hiding notes.");
+      }
+    } catch (err) {
+      showAuthError("Couldn't reach the server.");
+    }
+  });
+
+  ["auth-username", "auth-password", "auth-password-confirm"].forEach((id) => {
+    document.getElementById(id).addEventListener("keydown", (e) => {
+      if (e.key === "Enter") document.getElementById("auth-submit").click();
+    });
+  });
+
+  // -- admin password reset (recovery path for a forgotten password) ------
+
+  document.getElementById("auth-forgot-link").addEventListener("click", () => {
+    document.getElementById("admin-reset-username").value = document.getElementById("auth-username").value.trim();
+    document.getElementById("admin-reset-new-password").value = "";
+    document.getElementById("admin-reset-confirm-password").value = "";
+    document.getElementById("admin-reset-admin-password").value = "";
+    document.getElementById("admin-reset-error").style.display = "none";
+    openModal("admin-reset-overlay");
+  });
+
+  document.getElementById("admin-reset-submit").addEventListener("click", async () => {
+    const errEl = document.getElementById("admin-reset-error");
+    errEl.style.display = "none";
+    const username = document.getElementById("admin-reset-username").value.trim();
+    const newPassword = document.getElementById("admin-reset-new-password").value;
+    const confirmPassword = document.getElementById("admin-reset-confirm-password").value;
+    const adminPassword = document.getElementById("admin-reset-admin-password").value;
+
+    if (!username) { errEl.textContent = "Enter your username."; errEl.style.display = "block"; return; }
+    if (newPassword.length < 10) {
+      errEl.textContent = "New password must be at least 10 characters.";
+      errEl.style.display = "block";
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      errEl.textContent = "New passwords don't match.";
+      errEl.style.display = "block";
+      return;
+    }
+    if (!adminPassword) { errEl.textContent = "Enter the server's admin password."; errEl.style.display = "block"; return; }
+
+    try {
+      const res = await fetch("/api/admin/reset-password", {
+        method: "POST", headers: jsonHeaders(),
+        body: JSON.stringify({ username, new_password: newPassword, admin_password: adminPassword }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        errEl.textContent = data.error || "Couldn't reset the password.";
+        errEl.style.display = "block";
+        return;
+      }
+      closeModal("admin-reset-overlay");
+      setAuthMode("login");
+      document.getElementById("auth-username").value = username;
+      document.getElementById("auth-password").value = "";
+      showAuthError("Password reset -- sign in with your new password.");
+      document.getElementById("auth-password").focus();
+    } catch (err) {
+      errEl.textContent = "Couldn't reach the server.";
+      errEl.style.display = "block";
+    }
+  });
+
+  ["admin-reset-username", "admin-reset-new-password", "admin-reset-confirm-password", "admin-reset-admin-password"].forEach((id) => {
+    document.getElementById(id).addEventListener("keydown", (e) => {
+      if (e.key === "Enter") document.getElementById("admin-reset-submit").click();
+    });
+  });
+
+  document.getElementById("menu-logout").addEventListener("click", async () => {
+    if (state.modified && !confirmDiscardIfNeeded("Log out")) return;
+    try { await fetch("/api/logout", { method: "POST" }); } catch (err) { /* best effort */ }
+    currentUser = null;
+    hiddenUnlocked = false;
+    sessionStorage.removeItem(DRAFT_KEY);
+    editor.value = "";
+    state.filename = ""; state.notebook = null; state.source = ""; state.modified = false;
+    treeState.view = "notebooks"; treeState.currentNotebook = null;
+    treeState.notebooksCache = []; treeState.notesCache = [];
+    closeModal("settings-overlay");
+    showAuth();
+  });
+
+  // -- PIN set/change (Settings panel) ------------------------------------
+
+  async function refreshPinStatusNote() {
+    const note = document.getElementById("pin-status-note");
+    try {
+      const res = await fetch("/api/pin/status");
+      const data = await res.json();
+      note.textContent = data.has_pin
+        ? "A PIN is set. Enter your password and a new PIN to change it."
+        : "No PIN set yet -- hidden notebooks/notes can't be searched for until you set one.";
+    } catch (err) {
+      note.textContent = "Couldn't check PIN status.";
+    }
+  }
+
+  // -- change password -----------------------------------------------
+
+  document.getElementById("change-pw-button").addEventListener("click", async () => {
+    const current = document.getElementById("change-pw-current").value;
+    const next = document.getElementById("change-pw-new").value;
+    const confirmVal = document.getElementById("change-pw-confirm").value;
+    const errEl = document.getElementById("change-pw-error");
+    errEl.style.display = "none";
+    if (next.length < 8) {
+      errEl.textContent = "New password must be at least 8 characters.";
+      errEl.style.display = "block";
+      return;
+    }
+    if (next !== confirmVal) {
+      errEl.textContent = "New passwords don't match.";
+      errEl.style.display = "block";
+      return;
+    }
+    try {
+      const res = await fetch("/api/password/change", {
+        method: "POST", headers: jsonHeaders(),
+        body: JSON.stringify({ current_password: current, new_password: next }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        errEl.textContent = data.error || "Couldn't change password.";
+        errEl.style.display = "block";
+        return;
+      }
+      document.getElementById("change-pw-current").value = "";
+      document.getElementById("change-pw-new").value = "";
+      document.getElementById("change-pw-confirm").value = "";
+      showTransientStatus("Password changed");
+    } catch (err) {
+      errEl.textContent = "Couldn't reach the server.";
+      errEl.style.display = "block";
+    }
+  });
+
+  document.getElementById("pin-save-button").addEventListener("click", async () => {
+    const password = document.getElementById("pin-current-password").value;
+    const pin = document.getElementById("pin-new-value").value.trim();
+    const errEl = document.getElementById("pin-set-error");
+    errEl.style.display = "none";
+    if (!/^\d{4}$/.test(pin)) {
+      errEl.textContent = "PIN must be exactly 4 digits.";
+      errEl.style.display = "block";
+      return;
+    }
+    try {
+      const res = await fetch("/api/pin/set", {
+        method: "POST", headers: jsonHeaders(), body: JSON.stringify({ pin, password }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        errEl.textContent = data.error || "Couldn't set PIN.";
+        errEl.style.display = "block";
+        return;
+      }
+      document.getElementById("pin-current-password").value = "";
+      document.getElementById("pin-new-value").value = "";
+      showTransientStatus("PIN saved");
+      refreshPinStatusNote();
+    } catch (err) {
+      errEl.textContent = "Couldn't reach the server.";
+      errEl.style.display = "block";
+    }
+  });
+
+  // -- legacy flat-file import ---------------------------------------
+
+  async function refreshLegacyImportSection() {
+    const section = document.getElementById("legacy-import-section");
+    const listEl = document.getElementById("legacy-file-list");
+    try {
+      const res = await fetch("/api/legacy-files");
+      const data = await res.json();
+      const files = data.files || [];
+      if (files.length === 0) { section.style.display = "none"; return; }
+      section.style.display = "block";
+      listEl.innerHTML = "";
+      files.forEach((name) => {
+        const row = document.createElement("div");
+        row.className = "legacy-import-row";
+        const cb = document.createElement("input");
+        cb.type = "checkbox";
+        cb.value = name;
+        cb.checked = true;
+        cb.className = "legacy-import-checkbox";
+        const label = document.createElement("label");
+        label.textContent = name;
+        row.appendChild(cb);
+        row.appendChild(label);
+        listEl.appendChild(row);
+      });
+    } catch (err) {
+      section.style.display = "none";
+    }
+  }
+
+  document.getElementById("legacy-import-button").addEventListener("click", async () => {
+    const notebook = document.getElementById("legacy-notebook-name").value.trim() || "Imported";
+    const filenames = Array.from(document.querySelectorAll(".legacy-import-checkbox:checked")).map((cb) => cb.value);
+    if (filenames.length === 0) { showTransientStatus("Select at least one file to import"); return; }
+    try {
+      const res = await fetch("/api/legacy-import", {
+        method: "POST", headers: jsonHeaders(), body: JSON.stringify({ notebook, filenames }),
+      });
+      const data = await res.json();
+      if (!res.ok) { showTransientStatus(data.error || "Import failed"); return; }
+      showTransientStatus(`Imported ${data.imported.length} file(s) into "${notebook}"`);
+      await loadNotebooks();
+      await refreshLegacyImportSection();
+    } catch (err) {
+      showTransientStatus("Couldn't reach the server");
+    }
+  });
+
+  // -- entering the app once signed in ------------------------------------
+
+  async function enterApp() {
+    document.getElementById("app-shell").style.display = "flex";
+    document.getElementById("current-username").textContent = currentUser || "";
+    hiddenUnlocked = false;
+    updateEyeIcon();
+    await loadSettingsFromServer();
+    await loadNotebooks();
+    await restoreDraftFromSession();
+    refreshStatusLabel();
+    if (isMobileUI() && !state.filename) {
+      openMobileDrawer();
+    }
+  }
+
+  // ---------------------------------------------------------------
+  // Settings -- persisted server-side via the same /api/settings
+  // endpoint the VR build uses. Shared color keys (markdown_text_color,
+  // rich_text_color) use the exact same field names as that build, so
+  // the two can genuinely share preferences if pointed at the same
+  // server. scroll_multiplier is new here -- the VR build's
+  // "scroll_speed" is a different concept (thumbstick scrollbar-units/
+  // second) with no real equivalent for a normally-scrollable page, so
+  // this uses a distinct key rather than overloading that one.
+  // ---------------------------------------------------------------
+
+  function hexToRgba(hex, alpha) {
+    const clean = hex.replace("#", "");
+    const r = parseInt(clean.substring(0, 2), 16);
+    const g = parseInt(clean.substring(2, 4), 16);
+    const b = parseInt(clean.substring(4, 6), 16);
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+  }
+
+  function applySettingsToPage() {
+    document.documentElement.style.setProperty("--accent", settings.accent_color);
+    document.documentElement.style.setProperty("--accent-soft", hexToRgba(settings.accent_color, 0.16));
+    document.documentElement.style.setProperty("--editor-bg", settings.editor_background_color);
+    document.documentElement.style.setProperty("--md-color", settings.markdown_text_color);
+    document.documentElement.style.setProperty("--rt-color", settings.rich_text_color);
+    applyQuickToolbarVisibility();
+    applyAutoSaveTimer();
+  }
+
+  function populateSettingsForm() {
+    document.getElementById("setting-accent").value = settings.accent_color;
+    document.getElementById("setting-accent-hex").value = settings.accent_color;
+    document.getElementById("setting-bg").value = settings.editor_background_color;
+    document.getElementById("setting-bg-hex").value = settings.editor_background_color;
+    document.getElementById("setting-md-color").value = settings.markdown_text_color;
+    document.getElementById("setting-md-color-hex").value = settings.markdown_text_color;
+    document.getElementById("setting-rt-color").value = settings.rich_text_color;
+    document.getElementById("setting-rt-color-hex").value = settings.rich_text_color;
+    document.querySelectorAll(".hex-input").forEach((el) => el.classList.remove("invalid"));
+    document.getElementById("setting-scroll").value = settings.scroll_multiplier;
+    document.getElementById("setting-auto-list").checked = settings.auto_continue_lists;
+    document.getElementById("setting-save-action").value = settings.save_button_action;
+    document.getElementById("setting-quick-toolbar").checked = settings.show_quick_toolbar;
+    document.getElementById("setting-autosave").checked = settings.auto_save_enabled;
+    document.getElementById("setting-autosave-interval").value = settings.auto_save_interval_minutes;
+  }
+
+  // ---------------------------------------------------------------
+  // Auto-save -- only ever saves silently into a note that's already
+  // been saved/opened before (has both a filename and a notebook), and
+  // only when there's something unsaved to write; never prompts for a
+  // notebook the way a manual Save can, since that would be intrusive
+  // coming from a timer the person didn't just click.
+  // ---------------------------------------------------------------
+
+  let autoSaveTimer = null;
+
+  function applyAutoSaveTimer() {
+    if (autoSaveTimer) {
+      clearInterval(autoSaveTimer);
+      autoSaveTimer = null;
+    }
+    const minutes = Number(settings.auto_save_interval_minutes);
+    if (settings.auto_save_enabled && Number.isFinite(minutes) && minutes > 0) {
+      autoSaveTimer = setInterval(autoSaveTick, minutes * 60 * 1000);
+    }
+  }
+
+  async function autoSaveTick() {
+    if (!settings.auto_save_enabled) return;
+    if (!state.modified) return;
+    if (!state.filename || !state.notebook) return; // nothing to save into yet -- don't prompt
+    await saveToServer({ silent: true });
+  }
+
+  async function loadSettingsFromServer() {
+    try {
+      const res = await fetch("/api/settings");
+      const data = await res.json();
+      settings = Object.assign({}, DEFAULT_SETTINGS, data);
+    } catch (err) {
+      settings = Object.assign({}, DEFAULT_SETTINGS);
+    }
+    applySettingsToPage();
+  }
+
+  function saveSettingsToServer() {
+    fetch("/api/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(settings),
+    }).catch(() => { /* opportunistic -- fine if the server isn't reachable */ });
+  }
+
+  // ---------------------------------------------------------------
+  // Manage Shares -- lists every active share for the current
+  // account (GET /api/shares) with a copy-link action and a revoke
+  // button per row. Revoking removes both the registry entry and the
+  // underlying file server-side, so the old link stops working
+  // immediately rather than just disappearing from this list.
+  // ---------------------------------------------------------------
+
+  async function refreshManageSharesList() {
+    const listEl = document.getElementById("manage-shares-list");
+    const emptyEl = document.getElementById("manage-shares-empty");
+    listEl.innerHTML = "";
+    try {
+      const res = await fetch("/api/shares");
+      if (res.status === 401) { showAuth(); return; }
+      const data = await res.json();
+      const shares = data.shares || [];
+      emptyEl.style.display = shares.length ? "none" : "block";
+
+      shares.forEach((share) => {
+        const label = share.kind === "notebook"
+          ? share.notebook
+          : `${share.notebook} / ${displayNoteName(share.name)}`;
+        const url = `${window.location.origin}${share.path}`;
+
+        const row = document.createElement("div");
+        row.className = "share-row";
+
+        const info = document.createElement("div");
+        info.className = "share-row-info";
+        const kindEl = document.createElement("div");
+        kindEl.className = "share-row-kind";
+        kindEl.textContent = share.kind === "notebook" ? "Notebook" : "Note";
+        const titleEl = document.createElement("div");
+        titleEl.className = "share-row-title";
+        titleEl.textContent = label;
+        const linkBtn = document.createElement("button");
+        linkBtn.className = "share-row-link";
+        linkBtn.type = "button";
+        linkBtn.textContent = url;
+        linkBtn.title = "Click to copy";
+        linkBtn.addEventListener("click", () => copyShareLink(url, "Link copied to clipboard"));
+        info.appendChild(kindEl);
+        info.appendChild(titleEl);
+        info.appendChild(linkBtn);
+
+        const revokeBtn = document.createElement("button");
+        revokeBtn.className = "share-row-revoke";
+        revokeBtn.type = "button";
+        revokeBtn.textContent = "Revoke";
+        revokeBtn.addEventListener("click", async () => {
+          const confirmMsg = share.kind === "notebook"
+            ? `Revoke the share link for "${label}"? This also revokes every individual note link shared as part of this notebook -- all of them will stop working, not just this index page.`
+            : `Revoke the share link for "${label}"? Anyone with the old link will no longer be able to open it.`;
+          if (!window.confirm(confirmMsg)) return;
+          const params = new URLSearchParams({ kind: share.kind, notebook: share.notebook });
+          if (share.kind === "note") params.set("name", share.name);
+          try {
+            await fetch(`/api/share?${params.toString()}`, { method: "DELETE" });
+          } catch (err) { /* best effort */ }
+          refreshManageSharesList();
+        });
+
+        row.appendChild(info);
+        row.appendChild(revokeBtn);
+        listEl.appendChild(row);
+      });
+    } catch (err) {
+      listEl.innerHTML = '<div class="pin-status-note">Couldn\'t load shares.</div>';
+    }
+  }
+
+  document.getElementById("menu-manage-shares").addEventListener("click", () => {
+    openModal("manage-shares-overlay");
+    refreshManageSharesList();
+  });
+
+  document.getElementById("menu-settings").addEventListener("click", () => {
+    populateSettingsForm();
+    document.getElementById("current-username").textContent = currentUser || "";
+    refreshPinStatusNote();
+    refreshLegacyImportSection();
+    openModal("settings-overlay");
+  });
+
+  // Each color setting has a native color picker plus a paired hex
+  // text input -- either one can drive the value, kept in sync both
+  // ways. The picker always emits a valid 6-digit hex itself; typed
+  // text needs validating/normalizing (3-digit shorthand expanded,
+  // a missing leading "#" tolerated) before it's accepted.
+  function normalizeHex(value) {
+    let v = (value || "").trim();
+    if (!v.startsWith("#")) v = "#" + v;
+    if (/^#[0-9a-fA-F]{3}$/.test(v)) {
+      v = "#" + v.slice(1).split("").map((c) => c + c).join("");
+    }
+    return /^#[0-9a-fA-F]{6}$/.test(v) ? v.toLowerCase() : null;
+  }
+
+  function wireColorSetting(colorInputId, hexInputId, settingKey) {
+    const colorEl = document.getElementById(colorInputId);
+    const hexEl = document.getElementById(hexInputId);
+
+    colorEl.addEventListener("input", (e) => {
+      settings[settingKey] = e.target.value;
+      hexEl.value = e.target.value;
+      hexEl.classList.remove("invalid");
+      applySettingsToPage();
+    });
+    colorEl.addEventListener("change", saveSettingsToServer);
+
+    hexEl.addEventListener("input", (e) => {
+      const normalized = normalizeHex(e.target.value);
+      if (normalized) {
+        hexEl.classList.remove("invalid");
+        settings[settingKey] = normalized;
+        colorEl.value = normalized;
+        applySettingsToPage();
+      } else if (e.target.value.trim() !== "") {
+        hexEl.classList.add("invalid");
+      }
+    });
+    hexEl.addEventListener("change", (e) => {
+      const normalized = normalizeHex(e.target.value);
+      if (normalized) {
+        e.target.value = normalized;
+        hexEl.classList.remove("invalid");
+        saveSettingsToServer();
+      } else {
+        // Not a valid hex color -- revert to the last valid value
+        // rather than leaving garbage sitting in the field.
+        hexEl.classList.remove("invalid");
+        e.target.value = settings[settingKey];
+      }
+    });
+  }
+
+  wireColorSetting("setting-accent", "setting-accent-hex", "accent_color");
+  wireColorSetting("setting-bg", "setting-bg-hex", "editor_background_color");
+  wireColorSetting("setting-md-color", "setting-md-color-hex", "markdown_text_color");
+  wireColorSetting("setting-rt-color", "setting-rt-color-hex", "rich_text_color");
+
+
+  document.getElementById("setting-scroll").addEventListener("change", (e) => {
+    let value = parseFloat(e.target.value);
+    if (isNaN(value)) value = 1.0;
+    value = Math.min(5, Math.max(0.2, value));
+    settings.scroll_multiplier = value;
+    e.target.value = value;
+    saveSettingsToServer();
+  });
+
+  document.getElementById("setting-auto-list").addEventListener("change", (e) => {
+    settings.auto_continue_lists = e.target.checked;
+    saveSettingsToServer();
+  });
+
+  document.getElementById("setting-save-action").addEventListener("change", (e) => {
+    settings.save_button_action = e.target.value;
+    saveSettingsToServer();
+  });
+
+  document.getElementById("setting-quick-toolbar").addEventListener("change", (e) => {
+    settings.show_quick_toolbar = e.target.checked;
+    applyQuickToolbarVisibility();
+    saveSettingsToServer();
+  });
+
+  document.getElementById("setting-autosave").addEventListener("change", (e) => {
+    settings.auto_save_enabled = e.target.checked;
+    applyAutoSaveTimer();
+    saveSettingsToServer();
+  });
+
+  document.getElementById("setting-autosave-interval").addEventListener("change", (e) => {
+    let value = parseInt(e.target.value, 10);
+    if (!Number.isFinite(value) || value < 1) value = DEFAULT_SETTINGS.auto_save_interval_minutes;
+    value = Math.min(120, Math.max(1, value));
+    settings.auto_save_interval_minutes = value;
+    e.target.value = value;
+    applyAutoSaveTimer();
+    saveSettingsToServer();
+  });
+
+  document.getElementById("settings-reset").addEventListener("click", () => {
+    settings = Object.assign({}, DEFAULT_SETTINGS);
+    applySettingsToPage();
+    populateSettingsForm();
+    saveSettingsToServer();
+  });
+
+  // Scroll speed multiplier -- only intercepts wheel scrolling when set
+  // away from the default, so native smooth-scroll feel is left alone
+  // unless the person actually customizes this.
+  function applyScrollMultiplier(el) {
+    el.addEventListener("wheel", (e) => {
+      if (settings.scroll_multiplier === 1) return;
+      e.preventDefault();
+      el.scrollTop += e.deltaY * settings.scroll_multiplier;
+    }, { passive: false });
+  }
+  applyScrollMultiplier(editor);
+  applyScrollMultiplier(preview);
+
+  // ---------------------------------------------------------------
+  // Warn before leaving with unsaved changes
+  // ---------------------------------------------------------------
+
+  window.addEventListener("beforeunload", (e) => {
+    if (state.modified) {
+      e.preventDefault();
+      e.returnValue = "";
+    }
+  });
+
+  // ---------------------------------------------------------------
+  // Init -- check for an existing session before showing anything
+  // ---------------------------------------------------------------
+
+  (async function initAuth() {
+    try {
+      const res = await fetch("/api/me");
+      if (res.ok) {
+        const data = await res.json();
+        currentUser = data.username;
+        document.getElementById("auth-overlay").classList.remove("open");
+        await enterApp();
+        return;
+      }
+    } catch (err) {
+      // couldn't reach the server at all -- fall through to the sign-in
+      // screen, which is a reasonable default state either way
+    }
+    document.getElementById("auth-overlay").classList.add("open");
+  })();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,57 @@
+# Example deployment: Inkwell using the host's network directly
+# (network_mode: host), for when your cloudflared container also only
+# runs with host networking. A host-networked container can't be
+# attached to an additional custom Docker network the way
+# docker-compose.external-tunnel.yml's shared-network approach needs
+# -- so this goes the other direction and joins Inkwell to the same
+# host networking instead.
+#
+# This also completely bypasses Docker's bridge network and
+# port-publishing/NAT layer for this connection -- worth trying even
+# just as a diagnostic if you've been seeing "connection reset by
+# peer" errors from cloudflared that survived fixing the app-level
+# causes (HTTP keep-alive, chunked-encoding handling): if switching to
+# host networking makes the problem go away, that confirms it was
+# something in Docker's networking layer rather than the app; if it
+# doesn't, that rules Docker's networking layer back out.
+#
+# Host networking is Linux-only (Docker Desktop on Mac/Windows runs
+# inside a VM, where "host" means the VM, not your actual machine) --
+# fine for a bare Linux Docker host, which this whole setup assumes.
+#
+# Uses a pre-built `image:` rather than `build: .` -- see the other
+# compose files' comments for why (short version: Portainer's backend
+# usually can't read a build context from your host filesystem).
+# Build the image once:
+#   docker build -t inkwell:latest .   # add --build-arg INSTALL_STT=1 for local speech-to-text
+#
+# No `ports:` section at all -- meaningless under host networking,
+# since there's no publishing/translation step; the app binds
+# directly to whatever address/port INKWELL_HOST/INKWELL_PORT say, on
+# the real host. Because of that, restricting *which* interface it's
+# reachable on happens at the INKWELL_HOST level instead of Docker's
+# usual "127.0.0.1:PORT:PORT" trick -- set INKWELL_HOST to your host's
+# specific LAN IP (not 0.0.0.0) if you don't want this also listening
+# on any other interface the host might have (a public IP, a VPN
+# interface, etc.).
+
+services:
+  inkwell:
+    image: inkwell:latest
+    container_name: inkwell
+    network_mode: host
+    restart: unless-stopped
+    environment:
+      INKWELL_WORKSPACE_DIR: /data
+      INKWELL_HOST: "192.168.1.77"   # <- your host's LAN IP; or "0.0.0.0" for every interface
+      INKWELL_PORT: "8060"
+      INKWELL_ADMIN_PASSWORD: ${INKWELL_ADMIN_PASSWORD:?set a strong admin password in .env}
+      INKWELL_ENCRYPTION_KEY: ${INKWELL_ENCRYPTION_KEY:-}
+      INKWELL_STT_PROVIDER: ${INKWELL_STT_PROVIDER:-}
+      INKWELL_STT_LOCAL_MODEL: ${INKWELL_STT_LOCAL_MODEL:-base}
+      INKWELL_STT_API_KEY: ${INKWELL_STT_API_KEY:-}
+      INKWELL_STT_URL: ${INKWELL_STT_URL:-}
+      INKWELL_STT_MODEL_NAME: ${INKWELL_STT_MODEL_NAME:-whisper-1}
+    volumes:
+      - ${INKWELL_APP_DIR:?set the app code directory in .env}:/app
+      - ${INKWELL_DATA_DIR:?set the data directory in .env}:/data

@@ -1,0 +1,16 @@
+# Only needed if INKWELL_ENCRYPTION_KEY is set at runtime -- the app
+# refuses to start with that key configured but this missing, rather
+# than silently falling back to storing hidden notes as plain text.
+# Included in the Docker image unconditionally so the feature is
+# always available without a rebuild; install it yourself (pip install
+# -r requirements.txt) if running Python_HTTPS_Server.py directly and
+# you want encryption.
+cryptography>=42.0
+
+# Local speech-to-text (INKWELL_STT_PROVIDER=local) needs
+# 'faster-whisper' too, but that's NOT listed here -- it's a much
+# heavier dependency (pulls in ctranslate2, numpy, tokenizers) than
+# anything else this app needs, so it's kept out of the default image
+# entirely rather than bloating every deployment that doesn't want
+# local transcription. See requirements-stt.txt and the Dockerfile's
+# comments for how to opt in.

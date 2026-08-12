@@ -1,0 +1,84 @@
+# Example deployment: Inkwell behind Caddy, which gets you a real,
+# auto-renewing Let's Encrypt certificate for free just by naming your
+# domain -- no cert management inside the Inkwell container at all
+# (INKWELL_TLS stays "0"; Caddy talks plain HTTP to it over the
+# Docker-internal network, and HTTPS to the outside world).
+#
+# App code and data both come from host directories (bind mounts) --
+# INKWELL_APP_DIR/INKWELL_DATA_DIR in .env -- rather than living only
+# inside the image/a Docker-managed volume. That means:
+#   - Editing index.html on the host takes effect on the very next
+#     browser request -- it's a static file the app reads from disk
+#     each time, no restart needed.
+#   - Editing Python_HTTPS_Server.py on the host needs a restart to
+#     take effect (`docker compose restart inkwell`) -- Python only
+#     reads it once, at startup -- but that's still just a restart,
+#     not an image rebuild.
+#   - Your data lives at a host path you control directly, not inside
+#     Docker's own volume storage.
+#
+# 1. Build the image once yourself, from this same directory (see the
+#    note below on why `build:` isn't used directly in this file):
+#      docker build -t inkwell:latest .   # add --build-arg INSTALL_STT=1 for local speech-to-text
+# 2. Copy .env.example to .env, fill in real values, and set
+#    INKWELL_APP_DIR (should contain index.html and
+#    Python_HTTPS_Server.py -- e.g. this same folder) and
+#    INKWELL_DATA_DIR (created automatically on first run if it
+#    doesn't exist yet).
+# 3. Replace "your-domain.example.com" in Caddyfile with your actual
+#    domain, pointed at this server.
+# 4. docker compose up -d -- or paste this file into a new Portainer
+#    stack.
+#
+# This uses a pre-built `image:` rather than `build: .` on purpose --
+# if you're deploying this stack through Portainer (or most other
+# stack-management UIs), Portainer's own backend is what needs to read
+# the build context (Dockerfile, index.html, etc.) to build with, and
+# it usually doesn't have your host filesystem mounted into itself to
+# do that, even though the Docker daemon does. Bind-mounted volumes
+# don't have this problem -- those are just host-path strings handed
+# to the daemon directly -- only `build:` does. You'll rarely need to
+# rebuild after the first time, since the app code itself is
+# bind-mounted in at runtime -- only if you change requirements.txt or
+# the Dockerfile.
+
+services:
+  inkwell:
+    image: inkwell:latest
+    restart: unless-stopped
+    environment:
+      INKWELL_WORKSPACE_DIR: /data
+      INKWELL_ADMIN_PASSWORD: ${INKWELL_ADMIN_PASSWORD:?set a strong admin password in .env}
+      INKWELL_ENCRYPTION_KEY: ${INKWELL_ENCRYPTION_KEY:-}
+      INKWELL_STT_PROVIDER: ${INKWELL_STT_PROVIDER:-}
+      INKWELL_STT_LOCAL_MODEL: ${INKWELL_STT_LOCAL_MODEL:-base}
+      INKWELL_STT_API_KEY: ${INKWELL_STT_API_KEY:-}
+      INKWELL_STT_URL: ${INKWELL_STT_URL:-}
+      INKWELL_STT_MODEL_NAME: ${INKWELL_STT_MODEL_NAME:-whisper-1}
+    volumes:
+      - ${INKWELL_APP_DIR:?set the app code directory in .env}:/app
+      - ${INKWELL_DATA_DIR:?set the data directory in .env}:/data
+    expose:
+      - "8060"
+    # No ports: mapping here on purpose -- only Caddy is reachable from
+    # outside the Docker network. Uncomment this during initial setup
+    # if you want to hit the container directly over plain HTTP first:
+    # ports:
+    #   - "8060:8060"
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - inkwell
+
+volumes:
+  caddy_data:
+  caddy_config:

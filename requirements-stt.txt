@@ -1,0 +1,14 @@
+# Optional -- only needed if you're setting INKWELL_STT_PROVIDER=local
+# (running speech-to-text on this same server, rather than via a
+# remote provider like OpenAI/Groq/Google, or not using it at all).
+#
+# Not installed by default -- see the Dockerfile for how to build an
+# image that includes it, or `pip install -r requirements-stt.txt`
+# directly if running Python_HTTPS_Server.py outside Docker.
+#
+# The actual model weights (a separate, further download -- anywhere
+# from ~75MB for the "tiny" model to ~3GB for "large-v3", set via
+# INKWELL_STT_LOCAL_MODEL) are fetched from Hugging Face on first use
+# and cached under the workspace directory after that, not installed
+# by this file.
+faster-whisper>=1.0

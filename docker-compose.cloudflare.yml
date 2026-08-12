@@ -1,0 +1,84 @@
+# Example deployment: Inkwell behind a Cloudflare Tunnel instead of a
+# self-hosted reverse proxy. cloudflared makes an outbound-only
+# connection to Cloudflare's edge -- there's nothing to expose on this
+# host's firewall at all, and Cloudflare's edge is what terminates
+# real TLS for your public hostname, same role Caddy plays in
+# docker-compose.yml. INKWELL_TLS stays "0": the app serves plain HTTP
+# on the Docker-internal network, cloudflared is the only thing that
+# can reach it (no `ports:` published to the host), and Cloudflare
+# handles HTTPS to the browser.
+#
+# App code and data both come from host directories (bind mounts) --
+# INKWELL_APP_DIR/INKWELL_DATA_DIR in .env -- rather than living only
+# inside the image/a Docker-managed volume. That means:
+#   - Editing index.html on the host takes effect on the very next
+#     browser request -- it's a static file the app reads from disk
+#     each time, no restart needed.
+#   - Editing Python_HTTPS_Server.py on the host needs a restart to
+#     take effect (`docker compose -f docker-compose.cloudflare.yml
+#     restart inkwell`) -- Python only reads it once, at startup -- but
+#     that's still just a restart, not an image rebuild.
+#   - Your data lives at a host path you control directly, not inside
+#     Docker's own volume storage.
+#
+# 1. Build the image once yourself, from this same directory (see the
+#    note below on why `build:` isn't used directly in this file):
+#      docker build -t inkwell:latest .   # add --build-arg INSTALL_STT=1 for local speech-to-text
+# 2. In the Cloudflare Zero Trust dashboard: Networks -> Tunnels ->
+#    create a tunnel, choose Docker as the connector, and copy the
+#    token it gives you (a long string, `eyJ...`).
+# 3. Add a Public Hostname on that tunnel pointing at
+#    http://inkwell:8060 (the service name below, not localhost --
+#    cloudflared and inkwell talk to each other over the Docker
+#    network these compose services share).
+# 4. Copy .env.example to .env, fill in INKWELL_ADMIN_PASSWORD,
+#    INKWELL_ENCRYPTION_KEY, INKWELL_APP_DIR (should contain
+#    index.html and Python_HTTPS_Server.py -- e.g. this same folder),
+#    INKWELL_DATA_DIR (created automatically on first run if it
+#    doesn't exist yet), and add the line:
+#      CLOUDFLARE_TUNNEL_TOKEN=eyJ...
+# 5. docker compose -f docker-compose.cloudflare.yml up -d -- or paste
+#    this file into a new Portainer stack.
+#
+# This uses a pre-built `image:` rather than `build: .` on purpose --
+# if you're deploying this stack through Portainer (or most other
+# stack-management UIs), Portainer's own backend is what needs to read
+# the build context (Dockerfile, index.html, etc.) to build with, and
+# it usually doesn't have your host filesystem mounted into itself to
+# do that, even though the Docker daemon does. Bind-mounted volumes
+# don't have this problem -- those are just host-path strings handed
+# to the daemon directly -- only `build:` does. You'll rarely need to
+# rebuild after the first time, since the app code itself is
+# bind-mounted in at runtime -- only if you change requirements.txt or
+# the Dockerfile.
+
+services:
+  inkwell:
+    image: inkwell:latest
+    restart: unless-stopped
+    environment:
+      INKWELL_WORKSPACE_DIR: /data
+      INKWELL_ADMIN_PASSWORD: ${INKWELL_ADMIN_PASSWORD:?set a strong admin password in .env}
+      INKWELL_ENCRYPTION_KEY: ${INKWELL_ENCRYPTION_KEY:-}
+      INKWELL_STT_PROVIDER: ${INKWELL_STT_PROVIDER:-}
+      INKWELL_STT_LOCAL_MODEL: ${INKWELL_STT_LOCAL_MODEL:-base}
+      INKWELL_STT_API_KEY: ${INKWELL_STT_API_KEY:-}
+      INKWELL_STT_URL: ${INKWELL_STT_URL:-}
+      INKWELL_STT_MODEL_NAME: ${INKWELL_STT_MODEL_NAME:-whisper-1}
+    volumes:
+      - ${INKWELL_APP_DIR:?set the app code directory in .env}:/app
+      - ${INKWELL_DATA_DIR:?set the data directory in .env}:/data
+    expose:
+      - "8060"
+    # Deliberately no `ports:` here -- only cloudflared, on the same
+    # Docker network, can reach this container. Nothing is listening
+    # on the host's own network interfaces at all.
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: tunnel run
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:?set your tunnel token in .env}
+    depends_on:
+      - inkwell

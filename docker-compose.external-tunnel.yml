@@ -1,0 +1,82 @@
+# Example deployment: Inkwell alongside a Cloudflare Tunnel (or any
+# other reverse proxy) container you already run separately, rather
+# than one bundled into this compose file. The two containers just
+# need to share a Docker network so the tunnel can reach Inkwell by
+# container name -- Docker's built-in DNS resolves that name to the
+# right internal address automatically, no published ports needed.
+#
+# App code and data both come from host directories (bind mounts) --
+# INKWELL_APP_DIR/INKWELL_DATA_DIR in .env -- rather than living only
+# inside the image/a Docker-managed volume. That means:
+#   - Editing index.html on the host takes effect on the very next
+#     browser request -- it's a static file the app reads from disk
+#     each time, no restart needed.
+#   - Editing Python_HTTPS_Server.py on the host needs a restart to
+#     take effect (`docker compose -f docker-compose.external-tunnel.yml
+#     restart inkwell`) -- Python only reads it once, at startup -- but
+#     that's still just a restart, not an image rebuild.
+#   - Your data lives at a host path you control directly, not inside
+#     Docker's own volume storage.
+#
+# This uses a pre-built `image:` rather than `build: .` on purpose --
+# if you're deploying this stack through Portainer (or most other
+# stack-management UIs), Portainer's own backend is what needs to read
+# the build context (Dockerfile, index.html, etc.), and it usually
+# doesn't have your host filesystem mounted into itself to do that,
+# even though the Docker daemon does. Bind-mounted volumes don't have
+# this problem -- those are just host-path strings handed to the
+# daemon directly -- only `build:` does. Build the image once yourself
+# first, from the same directory as this file:
+#   docker build -t inkwell:latest .   # add --build-arg INSTALL_STT=1 for local speech-to-text
+# You'll rarely need to rebuild after that, since the app code itself
+# is bind-mounted in at runtime -- only if you change requirements.txt
+# or the Dockerfile.
+#
+# 1. Build the image once (see above).
+# 2. Create a network both containers will share (skip this if you
+#    already have one you use for this kind of thing):
+#      docker network create inkwell_net
+# 3. Attach your *existing* cloudflared container to it (this doesn't
+#    disturb whatever network(s) it's already on -- a container can be
+#    on more than one at once):
+#      docker network connect inkwell_net <your-cloudflared-container-name>
+#    (In Portainer: Networks -> inkwell_net -> Containers -> Add
+#    container -- no CLI needed if you'd rather not.)
+# 4. Copy .env.example to .env, fill in real values, and set
+#    INKWELL_APP_DIR (should contain index.html and
+#    Python_HTTPS_Server.py -- e.g. this same folder) and
+#    INKWELL_DATA_DIR (created automatically on first run if it
+#    doesn't exist yet).
+# 5. docker compose -f docker-compose.external-tunnel.yml up -d
+#    -- or paste this file into a new Portainer stack.
+# 6. In your Cloudflare Tunnel's public hostname config, point the
+#    service at http://inkwell:8060 -- "inkwell" is this container's
+#    name on the shared network (see container_name below), not
+#    localhost or 127.0.0.1.
+
+services:
+  inkwell:
+    image: inkwell:latest
+    container_name: inkwell
+    restart: unless-stopped
+    environment:
+      INKWELL_WORKSPACE_DIR: /data
+      INKWELL_ADMIN_PASSWORD: ${INKWELL_ADMIN_PASSWORD:?set a strong admin password in .env}
+      INKWELL_ENCRYPTION_KEY: ${INKWELL_ENCRYPTION_KEY:-}
+      INKWELL_STT_PROVIDER: ${INKWELL_STT_PROVIDER:-}
+      INKWELL_STT_LOCAL_MODEL: ${INKWELL_STT_LOCAL_MODEL:-base}
+      INKWELL_STT_API_KEY: ${INKWELL_STT_API_KEY:-}
+      INKWELL_STT_URL: ${INKWELL_STT_URL:-}
+      INKWELL_STT_MODEL_NAME: ${INKWELL_STT_MODEL_NAME:-whisper-1}
+    volumes:
+      - ${INKWELL_APP_DIR:?set the app code directory in .env}:/app
+      - ${INKWELL_DATA_DIR:?set the data directory in .env}:/data
+    networks:
+      - inkwell_net
+    # Deliberately no `ports:` -- only containers on inkwell_net (your
+    # tunnel container, once you've connected it in step 3 above) can
+    # reach this one. Nothing is exposed on the host at all.
+
+networks:
+  inkwell_net:
+    external: true

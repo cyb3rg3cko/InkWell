@@ -1,6 +1,6 @@
 InkWell is a markup editor that I built to replace Joplin because there were some features that I needed and Joplin just didn't have. 
 
--- Current Version Functions --
+## Current Version Functions
 
   - User accounts with passwords
   - Create Notebooks
@@ -31,7 +31,7 @@ InkWell is a markup editor that I built to replace Joplin because there were som
   - Docker Launch-able
 
 
--- Future Plans (Already in the works) --
+## Future Plans (Already in the works)
 
   - Local Sync of files (Single User)
   - Note Colab option

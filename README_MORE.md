@@ -1,6 +1,6 @@
 # Inkwell -- a flat-only Markdown editor with native clipboard support
 
-A standalone, non-VR alternative to the Godot VR text editor project.
+A standalone, non-VR alternative to a Godot VR text editor project.
 Plain HTML/CSS/JS, served by the same Python server design used there --
 no Godot, no WebGL canvas, no WASM.
 

@@ -1,0 +1,43 @@
+InkWell is a markup editor that I built to replace Joplin because there were some features that I needed and Joplin just didn't have. 
+
+-- Current Version Functions --
+
+  - User accounts with passwords
+  - Create Notebooks
+  - Create Notes inside notebooks
+  - Hide Notebooks and Notes
+  - Option to encrypt hidden items with configurable key
+  - Configurable admin password to recover user passwords if forgotten
+  - Configurable user pin to show hidden items
+  - Notebooks and Notes are sharable (creates a temp web page with unique addresses)
+  - Edit in Markup, View in Rich Text
+  - Mobile and Desktop optimized views
+  - Hide-able shortcut buttons for Indent, Outdent, Bullet Point, and Check Box
+  - Configurable scroll speed
+  - Configurable Quick Save Button
+  - Configurable Auto save with frequency
+  - Configurable Auto Continue Bullet Point and Check Box
+  - Configurable Web UI Colors
+  - Configurable Notebook and Note display order
+  - Live search-able Notebook and Note names
+  - Configurable TLS and self signed certificates
+  - Configurable Speech to text for both local or external API's (see future plans) 
+  
+      
+  - Python API Back End
+  - Clean Web Interface
+  - GUI Launch-able
+  - Headless Launch-able
+  - Docker Launch-able
+
+
+-- Future Plans (Already in the works) --
+
+  - Local Sync of files (Single User)
+  - Note Colab option
+  - Moving notes to different notebooks
+  - Notebook and note count
+  - Updated search function
+  - Godot built 2D interface for Linux, Windows, Mac, Android, IOS
+  - Godot built 2D and VR/AR interface for Meta Quest
+  - Push to talk voice to text option on Quest build (looking into other builds as well)

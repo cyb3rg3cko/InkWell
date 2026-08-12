@@ -33,7 +33,7 @@ InkWell is a markup editor that I built to replace Joplin because there were som
 
 ## Future Plans (Already in the works)
 
-  - Local Sync of files (Single User)
+  - Local Sync of files (Per Logged-In User)
   - Note Colab option
   - Moving notes to different notebooks
   - Notebook and note count

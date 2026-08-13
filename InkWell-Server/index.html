@@ -4,6 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Inkwell — Markdown Editor</title>
+<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png">
+<link rel="icon" type="image/png" sizes="128x128" href="/favicon-128.png">
+<link rel="icon" href="/favicon.ico">
 <script>
   // Runs before the rest of the page renders so the mobile layout is
   // in place from the first paint, rather than flashing desktop layout
@@ -2433,15 +2436,55 @@
     onMove(startEvent);
   }
 
+  // The tree only ever renders non-hidden items (see renderTree()'s
+  // .filter((x) => !x.hidden) calls), so a drag-reorder only ever sees
+  // and moves the visible ones. But the server's /reorder endpoints
+  // require the submitted order to account for every item, hidden or
+  // not -- rejecting anything less with a 400 ("must include every
+  // notebook/note exactly once"), which is exactly what surfaced as
+  // "Couldn't save the new order" whenever hidden items existed. This
+  // reinserts each hidden item right after whichever visible item it
+  // used to follow, so it silently keeps its relative spot rather than
+  // being included in the drag at all (which wouldn't make sense --
+  // hidden items don't appear on screen for the person to drag).
+  function mergeHiddenIntoOrder(newVisibleOrder, fullCachedList) {
+    const hiddenNames = new Set(fullCachedList.filter((item) => item.hidden).map((item) => item.name));
+    const originalOrder = fullCachedList.map((item) => item.name);
+
+    const followsMap = new Map(); // visible name -> hidden names that came right after it
+    const leadingHidden = []; // hidden names that came before any visible item
+    let precedingVisible = null;
+    for (const name of originalOrder) {
+      if (hiddenNames.has(name)) {
+        if (precedingVisible === null) {
+          leadingHidden.push(name);
+        } else {
+          if (!followsMap.has(precedingVisible)) followsMap.set(precedingVisible, []);
+          followsMap.get(precedingVisible).push(name);
+        }
+      } else {
+        precedingVisible = name;
+      }
+    }
+
+    const result = [...leadingHidden];
+    for (const name of newVisibleOrder) {
+      result.push(name);
+      if (followsMap.has(name)) result.push(...followsMap.get(name));
+    }
+    return result;
+  }
+
   async function persistTreeOrder(kind) {
     const names = Array.from(document.querySelectorAll("#tree-list .tree-row-btn")).map(
       (btn) => btn.dataset.name
     );
     if (kind === "notebook") {
-      treeState.notebooksCache.sort((a, b) => names.indexOf(a.name) - names.indexOf(b.name));
+      const fullOrder = mergeHiddenIntoOrder(names, treeState.notebooksCache);
+      treeState.notebooksCache.sort((a, b) => fullOrder.indexOf(a.name) - fullOrder.indexOf(b.name));
       try {
         const res = await fetch("/api/notebooks/reorder", {
-          method: "POST", headers: jsonHeaders(), body: JSON.stringify({ order: names }),
+          method: "POST", headers: jsonHeaders(), body: JSON.stringify({ order: fullOrder }),
         });
         if (res.status === 401) { showAuth(); return; }
         if (!res.ok) throw new Error("reorder failed");
@@ -2449,11 +2492,12 @@
         showTransientStatus("Couldn't save the new order");
       }
     } else {
-      treeState.notesCache.sort((a, b) => names.indexOf(a.name) - names.indexOf(b.name));
+      const fullOrder = mergeHiddenIntoOrder(names, treeState.notesCache);
+      treeState.notesCache.sort((a, b) => fullOrder.indexOf(a.name) - fullOrder.indexOf(b.name));
       try {
         const res = await fetch("/api/notes/reorder", {
           method: "POST", headers: jsonHeaders(),
-          body: JSON.stringify({ notebook: treeState.currentNotebook, order: names }),
+          body: JSON.stringify({ notebook: treeState.currentNotebook, order: fullOrder }),
         });
         if (res.status === 401) { showAuth(); return; }
         if (!res.ok) throw new Error("reorder failed");

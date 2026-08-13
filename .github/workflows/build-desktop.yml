@@ -12,7 +12,7 @@ on:
 # Change this if your Tauri project lives somewhere other than
 # inkwell-desktop/ (e.g. set to '.' if it's at the repo root).
 env:
-  TAURI_PROJECT_PATH: inkwell-desktop
+  TAURI_PROJECT_PATH: InkWell-Desktop
 
 jobs:
   build:

@@ -67,7 +67,23 @@ jobs:
           base64 -d <<< "${{ secrets.ANDROID_KEY_BASE64 }}" > "$RUNNER_TEMP/keystore.jks"
           echo "storeFile=$RUNNER_TEMP/keystore.jks" >> keystore.properties
 
-      - name: Build Android APK + AAB
+      # A release build with no signing keystore configured produces a
+      # completely UNSIGNED apk -- and Android flatly refuses to
+      # install anything with zero signature at all (not just a
+      # warning, an outright "package appears to be invalid" failure).
+      # A debug build sidesteps this: Tauri auto-signs it with the
+      # standard Android debug keystore, which Android is happy to
+      # install. Once real signing secrets exist, this switches to the
+      # genuine signed release build instead.
+      - name: Build Android APK (debug -- no signing keystore configured yet)
+        if: ${{ env.HAS_ANDROID_KEYSTORE == 'false' }}
+        working-directory: ${{ env.TAURI_PROJECT_PATH }}
+        env:
+          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/${{ env.NDK_VERSION }}
+        run: npx tauri android build --debug
+
+      - name: Build Android APK + AAB (signed release)
+        if: ${{ env.HAS_ANDROID_KEYSTORE == 'true' }}
         working-directory: ${{ env.TAURI_PROJECT_PATH }}
         env:
           NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/${{ env.NDK_VERSION }}

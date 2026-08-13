@@ -2379,20 +2379,46 @@
   // unsaved-changes prompt, a missing/renamed target, and auth
   // expiry gracefully on its own -- nothing extra needed here for
   // a link that no longer resolves to anything.
+  //
+  // Before navigating, checks whether the target is actually hidden
+  // and -- if so, and the PIN hasn't already been entered this page
+  // load -- requires it first. Without this, anyone using an already
+  // signed-in session (the exact scenario the PIN exists to guard
+  // against -- a shared/family device, someone else at your unlocked
+  // screen) could open a hidden note straight from a link typed into
+  // a completely ordinary, visible one, bypassing the PIN entirely.
+  // Most links point at normal, non-hidden things, so this only adds
+  // the check (one lightweight fetch) rather than blocking outright --
+  // it doesn't slow down the common case.
   previewInner.addEventListener("click", async (e) => {
     const link = e.target.closest(".inkwell-link");
     if (!link) return;
     e.preventDefault();
     const kind = link.dataset.inkwellKind;
     const target = link.dataset.inkwellTarget;
-    if (kind === "notebook") {
-      await openNotebook(target);
+
+    const navigate = async () => {
+      if (kind === "notebook") {
+        await openNotebook(target);
+      } else {
+        const slashIdx = target.indexOf("/");
+        const notebook = target.slice(0, slashIdx);
+        const noteTitle = target.slice(slashIdx + 1);
+        const filename = noteTitle.toLowerCase().endsWith(".txt") ? noteTitle : noteTitle + ".txt";
+        await openNote(notebook, filename);
+      }
+    };
+
+    if (hiddenUnlocked) { await navigate(); return; }
+    const nonHiddenTargets = await fetchLinkTargets();
+    // Not found here means hidden OR already renamed/deleted -- either
+    // way, requiring the PIN first is the safe default; a stale link
+    // just shows "couldn't load" same as normal once past that.
+    const isKnownNonHidden = nonHiddenTargets.some((t) => t.target === target);
+    if (isKnownNonHidden) {
+      await navigate();
     } else {
-      const slashIdx = target.indexOf("/");
-      const notebook = target.slice(0, slashIdx);
-      const noteTitle = target.slice(slashIdx + 1);
-      const filename = noteTitle.toLowerCase().endsWith(".txt") ? noteTitle : noteTitle + ".txt";
-      await openNote(notebook, filename);
+      requirePinThen(navigate);
     }
   });
 
@@ -3228,6 +3254,27 @@ ${links}
     else shareNote(treeState.currentNotebook, name);
   }
 
+  // A note can contain "@@[Target]" links typed manually rather than
+  // picked from the autocomplete (which only ever suggests non-hidden
+  // items) -- fine within the app itself, since knowing a hidden
+  // item's exact name already means you know about it, same reasoning
+  // as everywhere else "hidden" comes up. But a SHARED page is public,
+  // no login or PIN involved at all, and renderMarkdown() shows a
+  // link's target name as plain visible text regardless of hidden
+  // status -- so without this, sharing a note that happens to
+  // reference something hidden would put that name on a page anyone
+  // with the link can read. Redacts anything not in the current
+  // non-hidden target list before rendering for sharing specifically;
+  // a failed fetch here means an empty (safe) target list, so this
+  // fails toward over-redacting rather than ever leaking a name.
+  async function sanitizeLinksForSharing(markdownSource) {
+    const targets = await fetchLinkTargets();
+    const nonHidden = new Set(targets.map((t) => t.target));
+    return markdownSource.replace(/@@\[([^\]]+)\]/g, (whole, target) =>
+      nonHidden.has(target) ? whole : "*(private link removed)*"
+    );
+  }
+
   async function shareNote(notebook, name) {
     showTransientStatus("Creating share link…");
     try {
@@ -3235,8 +3282,9 @@ ${links}
       if (res.status === 401) { showAuth(); return; }
       if (!res.ok) { showTransientStatus("Couldn't load the note to share"); return; }
       const text = await res.text();
+      const sanitized = await sanitizeLinksForSharing(text);
       const title = displayNoteName(name);
-      const pageHtml = buildSharedNotePage(title, renderMarkdown(text), currentUser || "");
+      const pageHtml = buildSharedNotePage(title, renderMarkdown(sanitized), currentUser || "");
       const path = await upsertShare("note", notebook, name, pageHtml);
       if (!path) return;
       await copyShareLink(`${window.location.origin}${path}`, `Share link for "${title}" copied to clipboard`);
@@ -3268,8 +3316,9 @@ ${links}
         );
         if (!contentRes.ok) continue; // skip anything that fails rather than aborting the whole share
         const text = await contentRes.text();
+        const sanitized = await sanitizeLinksForSharing(text);
         const title = displayNoteName(note.name);
-        const pageHtml = buildSharedNotePage(title, renderMarkdown(text), currentUser || "");
+        const pageHtml = buildSharedNotePage(title, renderMarkdown(sanitized), currentUser || "");
         // Reuses that note's existing share link if it already has
         // one (e.g. from a previous notebook share, or from having
         // been shared individually) instead of minting a duplicate.
@@ -3334,6 +3383,11 @@ ${links}
     setTimeout(() => document.getElementById("pin-input").focus(), 50);
   });
 
+  // Set immediately before opening the PIN modal for something other
+  // than the eye-icon's own default (refresh search) -- e.g. resuming
+  // navigation to a hidden @@ link target once the PIN checks out.
+  let pendingPinAction = null;
+
   async function submitPin() {
     const pin = document.getElementById("pin-input").value.trim();
     const errEl = document.getElementById("pin-error");
@@ -3353,8 +3407,14 @@ ${links}
         closeModal("pin-overlay");
         document.getElementById("pin-input").value = "";
         updateEyeIcon();
-        runTreeSearch(lastTreeSearchQuery);
-        document.getElementById("tree-search").focus();
+        if (pendingPinAction) {
+          const action = pendingPinAction;
+          pendingPinAction = null;
+          action();
+        } else {
+          runTreeSearch(lastTreeSearchQuery);
+          document.getElementById("tree-search").focus();
+        }
       } else {
         errEl.textContent = data.error || "Incorrect PIN.";
         errEl.style.display = "block";
@@ -3368,6 +3428,32 @@ ${links}
   document.getElementById("pin-input").addEventListener("keydown", (e) => {
     if (e.key === "Enter") submitPin();
   });
+
+  // Shared PIN-gating helper -- runs `action` immediately if already
+  // unlocked this page load, otherwise prompts for the PIN first and
+  // only runs it on success. Mirrors the eye icon's own has_pin/no-PIN
+  // handling rather than duplicating it, so both stay consistent.
+  async function requirePinThen(action) {
+    if (hiddenUnlocked) { action(); return; }
+    let statusData = { has_pin: false };
+    try {
+      const res = await fetch("/api/pin/status");
+      if (res.status === 401) { showAuth(); return; }
+      statusData = await res.json();
+    } catch (err) { /* fall through -- treated as no PIN set */ }
+
+    if (!statusData.has_pin) {
+      showTransientStatus("Set a privacy PIN in Settings first");
+      populateSettingsForm();
+      openModal("settings-overlay");
+      return;
+    }
+    pendingPinAction = action;
+    document.getElementById("pin-input").value = "";
+    document.getElementById("pin-error").style.display = "none";
+    openModal("pin-overlay");
+    setTimeout(() => document.getElementById("pin-input").focus(), 50);
+  }
 
   let treeSearchDebounce = null;
   document.getElementById("tree-search").addEventListener("input", (e) => {

@@ -1,0 +1,1 @@
+Simple Tauri/Rust Native Webview

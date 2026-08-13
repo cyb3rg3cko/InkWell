@@ -1,0 +1,78 @@
+name: Build Desktop Apps (Linux, Windows, macOS)
+
+# Triggers on a version tag like "app-v0.1.0" -- push one to build all
+# three platforms and create a draft GitHub Release with every
+# installer attached. Also runnable manually from the Actions tab.
+on:
+  push:
+    tags:
+      - 'app-v*'
+  workflow_dispatch:
+
+# Change this if your Tauri project lives somewhere other than
+# inkwell-desktop/ (e.g. set to '.' if it's at the repo root).
+env:
+  TAURI_PROJECT_PATH: inkwell-desktop
+
+jobs:
+  build:
+    permissions:
+      contents: write # tauri-action needs this to create/update the GitHub Release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: ubuntu-22.04     # Linux -- produces .deb + .AppImage
+            args: ''
+          - platform: windows-latest   # Windows -- produces .msi + .exe (NSIS)
+            args: ''
+          - platform: macos-latest     # macOS -- one universal binary (Apple Silicon + Intel)
+            args: '--target universal-apple-darwin'
+
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - name: Install Linux system dependencies
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev \
+            libayatana-appindicator3-dev librsvg2-dev libssl-dev \
+            build-essential curl wget file pkg-config
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install npm dependencies
+        working-directory: ${{ env.TAURI_PROJECT_PATH }}
+        run: npm ci
+
+      - name: Build and attach to release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Uncomment these once you've set up signing (see SETUP.md) --
+          # unsigned builds work fine without them, just show an
+          # "unknown publisher"-style warning on first launch.
+          # TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          # TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          # APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          # APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        with:
+          projectPath: ${{ env.TAURI_PROJECT_PATH }}
+          tagName: app-v__VERSION__
+          releaseName: 'InkWell Desktop v__VERSION__'
+          releaseBody: 'See the assets below for the installer for your platform.'
+          releaseDraft: true
+          prerelease: false
+          args: ${{ matrix.args }}

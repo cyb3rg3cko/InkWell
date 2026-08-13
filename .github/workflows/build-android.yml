@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 env:
-  TAURI_PROJECT_PATH: inkwell-desktop
+  TAURI_PROJECT_PATH: InkWell-Desktop
   NDK_VERSION: '27.0.12077973'
 
 jobs:

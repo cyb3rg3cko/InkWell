@@ -1,0 +1,72 @@
+name: Build Android App
+
+on:
+  push:
+    tags:
+      - 'app-v*'
+  workflow_dispatch:
+
+env:
+  TAURI_PROJECT_PATH: inkwell-desktop
+  NDK_VERSION: '27.0.12077973'
+
+jobs:
+  build-android:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android NDK
+        run: sdkmanager --install "ndk;${{ env.NDK_VERSION }}"
+
+      - name: Install npm dependencies
+        working-directory: ${{ env.TAURI_PROJECT_PATH }}
+        run: npm ci
+
+      # Assumes src-tauri/gen/android/ is already committed to the repo
+      # (see SETUP.md's one-time local Android setup) -- so this does
+      # NOT run `tauri android init` here, which would regenerate that
+      # folder and wipe out the manual signing-config edit made to
+      # build.gradle.kts during that one-time setup.
+      - name: Set up signing (only if keystore secrets exist)
+        if: ${{ secrets.ANDROID_KEY_BASE64 != '' }}
+        working-directory: ${{ env.TAURI_PROJECT_PATH }}/src-tauri/gen/android
+        run: |
+          echo "keyAlias=${{ secrets.ANDROID_KEY_ALIAS }}" > keystore.properties
+          echo "password=${{ secrets.ANDROID_KEY_PASSWORD }}" >> keystore.properties
+          base64 -d <<< "${{ secrets.ANDROID_KEY_BASE64 }}" > "$RUNNER_TEMP/keystore.jks"
+          echo "storeFile=$RUNNER_TEMP/keystore.jks" >> keystore.properties
+
+      - name: Build Android APK + AAB
+        working-directory: ${{ env.TAURI_PROJECT_PATH }}
+        env:
+          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/${{ env.NDK_VERSION }}
+        run: npx tauri android build
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: inkwell-android
+          path: |
+            ${{ env.TAURI_PROJECT_PATH }}/src-tauri/gen/android/app/build/outputs/apk/**/*.apk
+            ${{ env.TAURI_PROJECT_PATH }}/src-tauri/gen/android/app/build/outputs/bundle/**/*.aab

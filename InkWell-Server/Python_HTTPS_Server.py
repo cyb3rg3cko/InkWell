@@ -838,6 +838,7 @@ class EditorRequestHandler(http.server.SimpleHTTPRequestHandler):
             "/api/pin/status": self._h_pin_status,
             "/api/settings": self._h_get_settings,
             "/api/shares": self._h_list_shares,
+            "/api/link-targets": self._h_link_targets,
         }
         if path in routes:
             routes[path](query)
@@ -862,6 +863,7 @@ class EditorRequestHandler(http.server.SimpleHTTPRequestHandler):
             "/api/notebooks/hide": self._h_hide_notebook,
             "/api/notebooks/reorder": self._h_reorder_notebooks,
             "/api/notes/rename": self._h_rename_note,
+            "/api/notes/move": self._h_move_note,
             "/api/notes/hide": self._h_hide_note,
             "/api/notes/reorder": self._h_reorder_notes,
             "/api/legacy-import": self._h_legacy_import,
@@ -1183,6 +1185,30 @@ class EditorRequestHandler(http.server.SimpleHTTPRequestHandler):
         out.sort(key=lambda n: (notebooks[n["name"]].get("order", 0), n["name"].lower()))
         self._send_json(200, {"notebooks": out})
 
+    def _h_link_targets(self, query):
+        """Everything non-hidden, flattened across all notebooks --
+        backs both the "@@" note/notebook link autocomplete and the
+        item counts shown in Settings. One query serves both, rather
+        than either feature needing its own N-requests-per-notebook
+        round trip."""
+        key = self._require_auth()
+        if not key:
+            return
+        with DATA_LOCK:
+            notebooks = _load_notebooks(key)
+            out_notebooks = []
+            out_notes = []
+            for nb_name, nb_info in notebooks.items():
+                if nb_info.get("hidden"):
+                    continue
+                out_notebooks.append(nb_name)
+                meta = _load_notes_meta(key, nb_name)
+                for note_name, note_info in meta.items():
+                    if note_info.get("hidden"):
+                        continue
+                    out_notes.append({"notebook": nb_name, "name": note_name})
+        self._send_json(200, {"notebooks": out_notebooks, "notes": out_notes})
+
     def _h_create_notebook(self, query):
         key = self._require_auth()
         if not key:
@@ -1502,6 +1528,79 @@ class EditorRequestHandler(http.server.SimpleHTTPRequestHandler):
                 self._send_json(500, {"error": str(e)})
                 return
         self._send_json(200, {"name": new})
+
+    def _h_move_note(self, query):
+        """Relocates a note to a different notebook -- distinct from
+        rename, which only changes the filename within the same
+        notebook. Whether the destination notebook is itself hidden
+        isn't checked here: same "hidden is a declutter convenience,
+        not a security boundary" stance as everywhere else -- the
+        client only ever offers non-hidden notebooks as move targets,
+        which is where that distinction actually belongs."""
+        key = self._require_auth()
+        if not key:
+            return
+        try:
+            body = self._read_json_body()
+        except (ValueError, UnicodeDecodeError):
+            self._send_json(400, {"error": "Invalid JSON body"})
+            return
+        from_notebook = (body.get("from_notebook") or "").strip()
+        name = os.path.basename(_note_filename((body.get("name") or "").strip()))
+        to_notebook = (body.get("to_notebook") or "").strip()
+        if not _valid_name(from_notebook) or not _valid_name(to_notebook) or not name:
+            self._send_json(400, {"error": "Invalid request"})
+            return
+        if from_notebook == to_notebook:
+            self._send_json(400, {"error": "Note is already in that notebook"})
+            return
+
+        with DATA_LOCK:
+            notebooks = _load_notebooks(key)
+            if to_notebook not in notebooks:
+                self._send_json(404, {"error": "Destination notebook not found"})
+                return
+
+            from_meta = _load_notes_meta(key, from_notebook)
+            if name not in from_meta:
+                self._send_json(404, {"error": "Note not found"})
+                return
+
+            to_meta = _load_notes_meta(key, to_notebook)
+            if name in to_meta:
+                self._send_json(409, {"error": "A note with that name already exists in the destination notebook"})
+                return
+
+            from_path = os.path.join(_notebook_dir(key, from_notebook), name)
+            to_path = os.path.join(_notebook_dir(key, to_notebook), name)
+            try:
+                os.makedirs(_notebook_dir(key, to_notebook), exist_ok=True)
+                os.rename(from_path, to_path)
+            except OSError as e:
+                self._send_json(500, {"error": str(e)})
+                return
+
+            info = from_meta.pop(name)
+            max_order = max((v.get("order", -1) for v in to_meta.values()), default=-1)
+            info["order"] = max_order + 1
+            info["modified"] = _iso_now()
+            to_meta[name] = info
+
+            _save_notes_meta(key, from_notebook, from_meta)
+            _save_notes_meta(key, to_notebook, to_meta)
+
+            # Keep any active share pointed at the note's new location
+            # rather than leaving it referencing a notebook the note
+            # isn't actually in anymore.
+            shares = self._load_shares(key)
+            old_share_key = f"{from_notebook}/{name}"
+            if old_share_key in shares["notes"]:
+                entry = shares["notes"].pop(old_share_key)
+                entry["notebook"] = to_notebook
+                shares["notes"][f"{to_notebook}/{name}"] = entry
+                self._save_shares(key, shares)
+
+        self._send_json(200, {"status": "ok", "notebook": to_notebook, "name": name})
 
     def _h_hide_note(self, query):
         key = self._require_auth()

@@ -938,6 +938,64 @@
   }
   .share-row-revoke:hover { border-color: var(--danger); }
 
+  .move-note-target {
+    display: block;
+    width: 100%;
+    text-align: left;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-size: 13.5px;
+    padding: 10px 12px;
+    border-radius: 8px;
+    cursor: pointer;
+    margin-bottom: 6px;
+  }
+  .move-note-target:hover { border-color: var(--accent); background: var(--accent-soft); }
+  .move-note-target:last-child { margin-bottom: 0; }
+
+  #link-autocomplete {
+    display: none;
+    position: fixed;
+    z-index: 500;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+    max-width: 320px;
+    max-height: 220px;
+    overflow-y: auto;
+    padding: 4px;
+  }
+  .link-autocomplete-item {
+    padding: 7px 10px;
+    border-radius: 6px;
+    font-size: 13px;
+    cursor: pointer;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .link-autocomplete-item.selected { background: var(--accent-soft); }
+  .link-autocomplete-empty {
+    padding: 8px 10px;
+    font-size: 12px;
+    color: var(--text-dim);
+  }
+
+  .inkwell-link {
+    color: var(--accent);
+    text-decoration: none;
+    border-bottom: 1px dashed var(--accent);
+    cursor: pointer;
+  }
+  .inkwell-link:hover { border-bottom-style: solid; }
+  .inkwell-link.broken {
+    color: var(--text-dim);
+    border-bottom-color: var(--text-dim);
+    cursor: default;
+  }
+
   .capslock-warning {
     display: none;
     align-items: center;
@@ -1090,6 +1148,7 @@
     <div id="main">
       <textarea id="editor" placeholder="Start writing…" spellcheck="false" autocomplete="off"></textarea>
       <div id="preview"><div id="preview-inner"></div></div>
+      <div id="link-autocomplete"></div>
     </div>
   </div>
 
@@ -1221,6 +1280,19 @@
     </div>
   </div>
 
+  <!-- Move Note modal -->
+  <div class="overlay" id="move-note-overlay">
+    <div class="modal" style="width:380px;">
+      <div class="modal-header">
+        Move to Notebook
+        <button class="modal-close" data-close="move-note-overlay">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div id="move-note-list"></div>
+      </div>
+    </div>
+  </div>
+
   <!-- Settings modal -->
   <div class="overlay" id="settings-overlay">
     <div class="modal">
@@ -1234,6 +1306,7 @@
           <span class="account-name">Signed in as <strong id="current-username"></strong></span>
           <button class="btn" id="menu-logout">Log Out</button>
         </div>
+        <div class="pin-status-note" id="settings-item-counts"></div>
 
         <div class="setting-section-label">Change Password</div>
         <div class="pin-form">
@@ -1852,6 +1925,197 @@
   });
 
   // ---------------------------------------------------------------
+  // "@@" link autocomplete -- typing "@@" opens a dropdown of every
+  // non-hidden notebook/note to link to; selecting one inserts
+  // "@@[Target]" at the cursor, which renderMarkdown() (see
+  // inlineMarkdown()) turns into a clickable in-app link. The target
+  // list is fetched once per "@@" session (not on every keystroke
+  // while filtering) and filtered client-side as you keep typing.
+  // ---------------------------------------------------------------
+
+  const linkAutocomplete = {
+    active: false,
+    startPos: -1,     // index of the first '@' in the editor text
+    allTargets: [],
+    filtered: [],
+    selectedIndex: 0,
+  };
+
+  async function fetchLinkTargets() {
+    try {
+      const res = await fetch("/api/link-targets");
+      if (res.status === 401) { showAuth(); return []; }
+      const data = await res.json();
+      const items = [];
+      (data.notebooks || []).forEach((nb) => items.push({ kind: "notebook", label: nb, target: nb }));
+      (data.notes || []).forEach((n) => {
+        const title = displayNoteName(n.name);
+        items.push({ kind: "note", label: `${n.notebook} / ${title}`, target: `${n.notebook}/${title}` });
+      });
+      return items;
+    } catch (err) {
+      return [];
+    }
+  }
+
+  // Standard "mirror div" technique for finding where a given text
+  // position actually renders on screen -- a plain <textarea> has no
+  // API for this, so the only way to know is to reproduce its exact
+  // layout (font, padding, wrapping) in an identical hidden element
+  // and measure where the text lands there instead.
+  function getCaretCoordinates(textarea, position) {
+    const div = document.createElement("div");
+    const style = getComputedStyle(textarea);
+    const properties = [
+      "boxSizing", "width", "borderTopWidth", "borderRightWidth", "borderBottomWidth", "borderLeftWidth",
+      "paddingTop", "paddingRight", "paddingBottom", "paddingLeft",
+      "fontStyle", "fontVariant", "fontWeight", "fontSize", "lineHeight", "fontFamily",
+      "textAlign", "textIndent", "letterSpacing", "wordSpacing", "tabSize", "whiteSpace", "wordWrap",
+    ];
+    div.style.position = "absolute";
+    div.style.visibility = "hidden";
+    div.style.whiteSpace = "pre-wrap";
+    div.style.wordWrap = "break-word";
+    properties.forEach((prop) => { div.style[prop] = style[prop]; });
+    div.style.width = textarea.clientWidth + "px";
+    document.body.appendChild(div);
+    div.textContent = textarea.value.substring(0, position);
+    const span = document.createElement("span");
+    span.textContent = textarea.value.substring(position) || ".";
+    div.appendChild(span);
+    const rect = textarea.getBoundingClientRect();
+    const lineHeight = parseInt(style.lineHeight, 10) || 20;
+    const coords = {
+      top: rect.top + span.offsetTop - textarea.scrollTop,
+      left: rect.left + span.offsetLeft - textarea.scrollLeft,
+      height: lineHeight,
+    };
+    document.body.removeChild(div);
+    return coords;
+  }
+
+  function closeLinkAutocomplete() {
+    linkAutocomplete.active = false;
+    linkAutocomplete.startPos = -1;
+    document.getElementById("link-autocomplete").style.display = "none";
+  }
+
+  function renderLinkAutocompleteDropdown() {
+    const dropdown = document.getElementById("link-autocomplete");
+    if (linkAutocomplete.filtered.length === 0) {
+      dropdown.innerHTML = '<div class="link-autocomplete-empty">No matches</div>';
+    } else {
+      dropdown.innerHTML = "";
+      linkAutocomplete.filtered.forEach((item, idx) => {
+        const row = document.createElement("div");
+        row.className = "link-autocomplete-item" + (idx === linkAutocomplete.selectedIndex ? " selected" : "");
+        row.textContent = (item.kind === "notebook" ? "📓 " : "📝 ") + item.label;
+        // mousedown, not click -- fires before the textarea loses focus/
+        // selection, so the insertion below still has a valid cursor
+        // position to work with.
+        row.addEventListener("mousedown", (e) => {
+          e.preventDefault();
+          selectLinkAutocompleteItem(idx);
+        });
+        dropdown.appendChild(row);
+      });
+    }
+    const coords = getCaretCoordinates(editor, linkAutocomplete.startPos);
+    dropdown.style.left = Math.min(coords.left, window.innerWidth - 330) + "px";
+    dropdown.style.top = coords.top + coords.height + 4 + "px";
+    dropdown.style.display = "block";
+  }
+
+  function applyLinkAutocompleteFilter(filterText) {
+    const q = filterText.toLowerCase();
+    linkAutocomplete.filtered = linkAutocomplete.allTargets
+      .filter((it) => it.label.toLowerCase().includes(q))
+      .slice(0, 8);
+    linkAutocomplete.selectedIndex = 0;
+    renderLinkAutocompleteDropdown();
+  }
+
+  function selectLinkAutocompleteItem(idx) {
+    const item = linkAutocomplete.filtered[idx];
+    if (!item) return;
+    const pos = editor.selectionStart;
+    const text = editor.value;
+    const before = text.slice(0, linkAutocomplete.startPos);
+    const after = text.slice(pos);
+    const insertion = `@@[${item.target}]`;
+    editor.value = before + insertion + after;
+    const newPos = before.length + insertion.length;
+    editor.selectionStart = editor.selectionEnd = newPos;
+    closeLinkAutocomplete();
+    markModified();
+    if (state.mode === "rich_text") previewInner.innerHTML = renderMarkdown(editor.value);
+    editor.focus();
+  }
+
+  async function updateLinkAutocompleteState() {
+    const pos = editor.selectionStart;
+    const text = editor.value;
+    const beforeCursor = text.slice(0, pos);
+    const match = beforeCursor.match(/@@([^\s\]@]*)$/);
+    if (!match) {
+      if (linkAutocomplete.active) closeLinkAutocomplete();
+      return;
+    }
+    const filterText = match[1];
+    const startPos = pos - match[0].length;
+
+    if (!linkAutocomplete.active || linkAutocomplete.startPos !== startPos) {
+      linkAutocomplete.active = true;
+      linkAutocomplete.startPos = startPos;
+      linkAutocomplete.allTargets = await fetchLinkTargets();
+    }
+    applyLinkAutocompleteFilter(filterText);
+  }
+
+  editor.addEventListener("input", updateLinkAutocompleteState);
+  // Typing isn't the only way the cursor can move away from an open
+  // "@@" trigger -- a click or arrow-key navigation doesn't fire
+  // "input" at all, and would otherwise leave the dropdown open and
+  // pointing at a stale position.
+  editor.addEventListener("click", () => { if (linkAutocomplete.active) updateLinkAutocompleteState(); });
+  editor.addEventListener("keyup", (e) => {
+    if (linkAutocomplete.active && ["ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key)) {
+      updateLinkAutocompleteState();
+    }
+  });
+  editor.addEventListener("blur", () => { if (linkAutocomplete.active) closeLinkAutocomplete(); });
+
+  // Capture phase, so this runs before the auto-continue-lists Enter/
+  // Tab handler above -- otherwise selecting an autocomplete item with
+  // Enter would also insert a newline/continue a list at the same time.
+  editor.addEventListener("keydown", (e) => {
+    if (!linkAutocomplete.active) return;
+    if (e.key === "Escape") {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      closeLinkAutocomplete();
+      return;
+    }
+    if (linkAutocomplete.filtered.length === 0) return;
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      linkAutocomplete.selectedIndex = (linkAutocomplete.selectedIndex + 1) % linkAutocomplete.filtered.length;
+      renderLinkAutocompleteDropdown();
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      linkAutocomplete.selectedIndex =
+        (linkAutocomplete.selectedIndex - 1 + linkAutocomplete.filtered.length) % linkAutocomplete.filtered.length;
+      renderLinkAutocompleteDropdown();
+    } else if (e.key === "Enter" || e.key === "Tab") {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      selectLinkAutocompleteItem(linkAutocomplete.selectedIndex);
+    }
+  }, true);
+
+  // ---------------------------------------------------------------
   // Double-click to select a word -- implemented manually rather than
   // relying on the browser's own native double-click/selection-gesture
   // detection. Works fine on desktop with a real mouse, but VR browsers
@@ -1991,6 +2255,20 @@
     line = line.replace(/https?:\/\/[^\s<]+/g, (url) =>
       stash(`<a href="${url}" target="_blank" rel="noopener">${url}</a>`)
     );
+    // @@[NotebookName] or @@[NotebookName/NoteName] -- an in-app link to
+    // another notebook/note, created via the "@@" autocomplete while
+    // typing. "/" is a safe, unambiguous separator here since valid
+    // notebook/note names can never contain one (see NAME_RE
+    // server-side). Rendered as a plain-looking link; actual
+    // navigation is handled by a click listener on the preview pane,
+    // not a real href, since this needs to switch panes within the
+    // app rather than load a URL.
+    line = line.replace(/@@\[([^\]]+)\]/g, (_, target) => {
+      const isNote = target.includes("/");
+      return stash(
+        `<a href="#" class="inkwell-link" data-inkwell-kind="${isNote ? "note" : "notebook"}" data-inkwell-target="${target}">${target}</a>`
+      );
+    });
 
     line = line.replace(/\*\*(.+?)\*\*|__(.+?)__/g, (_, a, b) => `<strong>${a || b}</strong>`);
     line = line.replace(/\*(.+?)\*|_(.+?)_/g, (_, a, b) => `<em>${a || b}</em>`);
@@ -2090,6 +2368,32 @@
     lines[lineIdx] = `${m[1]}${m[2]} [${newMark}] ${m[4]}`;
     editor.value = lines.join("\n");
     markModified();
+  });
+
+  // @@[Target] links -- clicking navigates within the app instead of
+  // following a real URL. Mirrors exactly how a search result click
+  // behaves for the same two cases (see runTreeSearch): a note link
+  // opens straight into the editor without touching the sidebar's
+  // current notebook context; a notebook link switches the sidebar
+  // into browsing that notebook. openNote() already handles an
+  // unsaved-changes prompt, a missing/renamed target, and auth
+  // expiry gracefully on its own -- nothing extra needed here for
+  // a link that no longer resolves to anything.
+  previewInner.addEventListener("click", async (e) => {
+    const link = e.target.closest(".inkwell-link");
+    if (!link) return;
+    e.preventDefault();
+    const kind = link.dataset.inkwellKind;
+    const target = link.dataset.inkwellTarget;
+    if (kind === "notebook") {
+      await openNotebook(target);
+    } else {
+      const slashIdx = target.indexOf("/");
+      const notebook = target.slice(0, slashIdx);
+      const noteTitle = target.slice(slashIdx + 1);
+      const filename = noteTitle.toLowerCase().endsWith(".txt") ? noteTitle : noteTitle + ".txt";
+      await openNote(notebook, filename);
+    }
   });
 
   // ---------------------------------------------------------------
@@ -2605,10 +2909,15 @@
 
     const items = [
       { label: "Rename", action: () => renameTreeItem(kind, name) },
+    ];
+    if (kind === "note") {
+      items.push({ label: "Move to Notebook…", action: () => openMoveNoteModal(name) });
+    }
+    items.push(
       { label: "Share", action: () => shareTreeItem(kind, name) },
       { label: "Hide", action: () => setHidden(kind, name, true, treeState.currentNotebook) },
       { label: "Delete", danger: true, action: () => deleteTreeItem(kind, name) },
-    ];
+    );
     items.forEach((it) => {
       const b = document.createElement("button");
       b.className = "tree-context-item" + (it.danger ? " danger" : "");
@@ -2654,6 +2963,72 @@
       await loadNotes(treeState.currentNotebook);
     }
     refreshStatusLabel();
+  }
+
+  // ---------------------------------------------------------------
+  // Move Note -- relocates a note to a different notebook. Only
+  // non-hidden notebooks (besides the one it's already in) are ever
+  // offered as targets; same client-side-only enforcement as
+  // everywhere else "hidden" comes up in this app.
+  // ---------------------------------------------------------------
+
+  let moveNoteTargetName = null;
+
+  function openMoveNoteModal(name) {
+    moveNoteTargetName = name;
+    openModal("move-note-overlay");
+    refreshMoveNoteList();
+  }
+
+  async function refreshMoveNoteList() {
+    const listEl = document.getElementById("move-note-list");
+    listEl.innerHTML = '<div class="pin-status-note">Loading…</div>';
+    try {
+      const res = await fetch("/api/notebooks");
+      if (res.status === 401) { showAuth(); return; }
+      const data = await res.json();
+      const targets = (data.notebooks || []).filter(
+        (nb) => !nb.hidden && nb.name !== treeState.currentNotebook
+      );
+      listEl.innerHTML = "";
+      if (targets.length === 0) {
+        listEl.innerHTML = '<div class="pin-status-note">No other notebooks to move this into -- create one first.</div>';
+        return;
+      }
+      targets.forEach((nb) => {
+        const btn = document.createElement("button");
+        btn.className = "move-note-target";
+        btn.type = "button";
+        btn.textContent = nb.name;
+        btn.addEventListener("click", () => performMoveNote(nb.name));
+        listEl.appendChild(btn);
+      });
+    } catch (err) {
+      listEl.innerHTML = '<div class="pin-status-note">Couldn\'t load notebooks.</div>';
+    }
+  }
+
+  async function performMoveNote(toNotebook) {
+    const fromNotebook = treeState.currentNotebook;
+    const name = moveNoteTargetName;
+    try {
+      const res = await fetch("/api/notes/move", {
+        method: "POST", headers: jsonHeaders(),
+        body: JSON.stringify({ from_notebook: fromNotebook, name, to_notebook: toNotebook }),
+      });
+      const data = await res.json();
+      if (res.status === 401) { showAuth(); return; }
+      if (!res.ok) { showTransientStatus(data.error || "Couldn't move the note"); return; }
+      closeModal("move-note-overlay");
+      showTransientStatus(`Moved to "${toNotebook}"`);
+      if (state.notebook === fromNotebook && state.filename === name) {
+        state.notebook = toNotebook;
+        refreshStatusLabel();
+      }
+      await loadNotes(fromNotebook);
+    } catch (err) {
+      showTransientStatus("Couldn't move the note");
+    }
   }
 
   async function setHidden(kind, name, hidden, notebookForNote) {
@@ -3016,13 +3391,19 @@ ${links}
     resultsEl.innerHTML = "";
     // Hidden items only surface once the eye icon has been unlocked
     // with the PIN -- otherwise this is a plain, always-available
-    // search over the normal (non-hidden) notebooks/notes.
+    // search over the normal (non-hidden) notebooks/notes. Even when
+    // unlocked, hidden matches stay out of the results until the
+    // query is at least 3 characters -- a 1-2 character search is
+    // broad enough to accidentally surface a hidden item's name just
+    // by casually typing, before there's any real intent behind the
+    // search.
+    const includeHidden = hiddenUnlocked && q.length >= 3;
     const items = [
       ...(data.notebooks || [])
-        .filter((n) => hiddenUnlocked || !n.hidden)
+        .filter((n) => includeHidden || !n.hidden)
         .map((n) => ({ kind: "notebook", name: n.name, hidden: n.hidden })),
       ...(data.notes || [])
-        .filter((n) => hiddenUnlocked || !n.hidden)
+        .filter((n) => includeHidden || !n.hidden)
         .map((n) => ({ kind: "note", name: n.name, notebook: n.notebook, hidden: n.hidden })),
     ];
     if (items.length === 0) {
@@ -3545,8 +3926,24 @@ ${links}
     document.getElementById("current-username").textContent = currentUser || "";
     refreshPinStatusNote();
     refreshLegacyImportSection();
+    refreshItemCounts();
     openModal("settings-overlay");
   });
+
+  async function refreshItemCounts() {
+    const el = document.getElementById("settings-item-counts");
+    el.textContent = "Loading…";
+    try {
+      const res = await fetch("/api/link-targets");
+      if (res.status === 401) { showAuth(); return; }
+      const data = await res.json();
+      const nbCount = (data.notebooks || []).length;
+      const noteCount = (data.notes || []).length;
+      el.textContent = `${nbCount} notebook${nbCount === 1 ? "" : "s"}, ${noteCount} note${noteCount === 1 ? "" : "s"}`;
+    } catch (err) {
+      el.textContent = "";
+    }
+  }
 
   // Each color setting has a native color picker plus a paired hex
   // text input -- either one can drive the value, kept in sync both

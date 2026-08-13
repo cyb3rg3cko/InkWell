@@ -10,12 +10,11 @@ env:
   TAURI_PROJECT_PATH: InkWell-Desktop
   NDK_VERSION: '27.0.12077973'
 
-permissions:
-  contents: write
-
 jobs:
   build-android:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write  # needed to attach the APK/AAB to the GitHub Release
     env:
       HAS_ANDROID_KEYSTORE: ${{ secrets.ANDROID_KEY_BASE64 != '' }}
     steps:
@@ -74,10 +73,29 @@ jobs:
           NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/${{ env.NDK_VERSION }}
         run: npx tauri android build
 
-      - name: Upload build artifacts
+      - name: Upload build artifacts (workflow run only -- quick access, expires after 90 days)
         uses: actions/upload-artifact@v4
         with:
           name: inkwell-android
           path: |
             ${{ env.TAURI_PROJECT_PATH }}/src-tauri/gen/android/app/build/outputs/apk/**/*.apk
             ${{ env.TAURI_PROJECT_PATH }}/src-tauri/gen/android/app/build/outputs/bundle/**/*.aab
+
+      # This is what actually makes it show up on the Releases page --
+      # the step above only attaches it to this one workflow run, which
+      # isn't visible from Releases at all. Creates the release if the
+      # desktop workflow hasn't finished yet, or attaches to the
+      # existing one (matched by tag) if it has -- order between the
+      # two workflows doesn't matter either way. Tag-only, since
+      # workflow_dispatch runs aren't attached to a release.
+      - name: Attach to GitHub Release
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          draft: true
+          files: |
+            ${{ env.TAURI_PROJECT_PATH }}/src-tauri/gen/android/app/build/outputs/apk/**/*.apk
+            ${{ env.TAURI_PROJECT_PATH }}/src-tauri/gen/android/app/build/outputs/bundle/**/*.aab
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

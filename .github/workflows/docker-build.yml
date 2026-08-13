@@ -3,6 +3,12 @@ name: Build and Push Docker Images
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - 'inkwell-desktop/**'
+      - '.github/workflows/build-desktop.yml'
+      - '.github/workflows/build-android.yml'
+      - '.github/workflows/build-ios.yml'
+      - 'SETUP-desktop-builds.md'
   workflow_dispatch:  # lets you trigger a rebuild manually from the Actions tab, no new commit needed
 
 env:

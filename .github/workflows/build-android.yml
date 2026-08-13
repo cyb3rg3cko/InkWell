@@ -13,6 +13,8 @@ env:
 jobs:
   build-android:
     runs-on: ubuntu-latest
+    env:
+      HAS_ANDROID_KEYSTORE: ${{ secrets.ANDROID_KEY_BASE64 != '' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -43,13 +45,19 @@ jobs:
         working-directory: ${{ env.TAURI_PROJECT_PATH }}
         run: npm ci
 
-      # Assumes src-tauri/gen/android/ is already committed to the repo
-      # (see SETUP.md's one-time local Android setup) -- so this does
-      # NOT run `tauri android init` here, which would regenerate that
-      # folder and wipe out the manual signing-config edit made to
-      # build.gradle.kts during that one-time setup.
+      # Only runs if src-tauri/gen/android/ isn't already in the repo --
+      # once you've done the one-time signed-build setup (SETUP.md) and
+      # committed that folder, this step is a no-op, so it never
+      # overwrites your manual build.gradle.kts signing-config edit.
+      - name: Initialize Android project (first time only)
+        if: ${{ hashFiles(format('{0}/src-tauri/gen/android/**', env.TAURI_PROJECT_PATH)) == '' }}
+        working-directory: ${{ env.TAURI_PROJECT_PATH }}
+        env:
+          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/${{ env.NDK_VERSION }}
+        run: npx tauri android init
+
       - name: Set up signing (only if keystore secrets exist)
-        if: ${{ secrets.ANDROID_KEY_BASE64 != '' }}
+        if: ${{ env.HAS_ANDROID_KEYSTORE == 'true' }}
         working-directory: ${{ env.TAURI_PROJECT_PATH }}/src-tauri/gen/android
         run: |
           echo "keyAlias=${{ secrets.ANDROID_KEY_ALIAS }}" > keystore.properties

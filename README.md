@@ -41,6 +41,9 @@ InkWell is a markup editor that I built to replace Joplin because there were som
 
 ## Server Setup
 
+* Windows users will need to install Python for windows to run the server
+* Linux users should be OK but may need some Pythin libraries.
+
 (A) GUI
 	Download the zip file and extract to a folder. Open the run.sh / run.vc in a text editor and choose the option you need to launch with, and save. Run the launch script, verify working directory, verify IP (leave at 0.0.0.0 to accept all incoming IP's in that subdomain), verify port number, and click "Start Server". Finally navigate in a browser to "https://<your pc running server ip>:<desired port>"
 

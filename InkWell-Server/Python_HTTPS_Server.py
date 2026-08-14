@@ -2312,6 +2312,7 @@ def start_http_server(workspace_dir: str, host: str, port: int, use_tls: bool, c
                 f"TLS is enabled but cert/key not found (cert={cert_path}, key={key_path})"
             )
         ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        ssl_context.maximum_version = ssl.TLSVersion.TLSv1_2   # test: mbedTLS/TLS1.3 interop can be flaky
         ssl_context.load_cert_chain(certfile=cert_path, keyfile=key_path)
         httpd.socket = ssl_context.wrap_socket(httpd.socket, server_side=True)
         scheme = "https"
